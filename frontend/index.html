@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Network Monitor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { mono: ['JetBrains Mono', 'Fira Code', 'monospace'] },
+          transitionProperty: { panel: 'transform, opacity' },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    html { color-scheme: dark; }
+    body { font-family: 'JetBrains Mono', monospace; }
+    .panel-enter  { transform: translateX(100%); }
+    .panel-open   { transform: translateX(0); }
+    #panel        { transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
+    #overlay      { transition: opacity 0.28s ease; }
+    tr.device-row { cursor: pointer; }
+    tr.device-row:hover td { background-color: rgba(99,102,241,0.08); }
+    .badge        { display: inline-flex; align-items: center; padding: 2px 8px;
+                    border-radius: 9999px; font-size: 0.7rem; font-weight: 600;
+                    letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; }
+    .dot          { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    ::-webkit-scrollbar       { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    .log-row      { border-left: 3px solid transparent; }
+    @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .live-dot     { animation: pulse-dot 2s ease-in-out infinite; }
+  </style>
+</head>
+<body class="dark bg-gray-950 text-gray-100 min-h-screen antialiased">
+
+<!-- ═══════════════════════════════════════════ HEADER ══ -->
+<header class="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-30">
+  <div class="max-w-screen-2xl mx-auto px-6 py-4 flex items-center justify-between gap-6 flex-wrap">
+
+    <!-- Brand -->
+    <div class="flex items-center gap-3">
+      <svg class="w-7 h-7 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0H3" />
+      </svg>
+      <div>
+        <h1 class="text-base font-semibold text-gray-100 leading-none">Network Monitor</h1>
+        <p class="text-xs text-gray-500 mt-0.5">Local network discovery &amp; syslog viewer</p>
+      </div>
+    </div>
+
+    <!-- Stats chips -->
+    <div class="flex items-center gap-2 flex-wrap text-xs">
+      <span class="stat-chip px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300" id="stat-total">
+        <span class="text-gray-500">Total</span> <span id="count-total" class="font-semibold text-gray-100 ml-1">–</span>
+      </span>
+      <span class="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300">
+        <span class="text-gray-500">Bare-metal</span> <span id="count-bm" class="font-semibold text-gray-300 ml-1">–</span>
+      </span>
+      <span class="px-3 py-1.5 rounded-lg bg-cyan-950 border border-cyan-900 text-cyan-300">
+        <span class="text-cyan-600">Docker</span> <span id="count-docker" class="font-semibold ml-1">–</span>
+      </span>
+      <span class="px-3 py-1.5 rounded-lg bg-amber-950 border border-amber-900 text-amber-300">
+        <span class="text-amber-600">VM</span> <span id="count-vm" class="font-semibold ml-1">–</span>
+      </span>
+      <span class="px-3 py-1.5 rounded-lg bg-purple-950 border border-purple-900 text-purple-300">
+        <span class="text-purple-600">LXC</span> <span id="count-lxc" class="font-semibold ml-1">–</span>
+      </span>
+    </div>
+
+    <!-- Refresh controls -->
+    <div class="flex items-center gap-3">
+      <span class="flex items-center gap-1.5 text-xs text-gray-500">
+        <span class="dot live-dot bg-emerald-500"></span>
+        <span id="last-updated">–</span>
+      </span>
+      <button id="btn-refresh"
+        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+               bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
+        <svg id="refresh-icon" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+        </svg>
+        Refresh
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════ MAIN ══ -->
+<main class="max-w-screen-2xl mx-auto px-6 py-6">
+
+  <!-- Search + filter bar -->
+  <div class="flex items-center gap-3 mb-4">
+    <div class="relative flex-1 max-w-sm">
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803a7.5 7.5 0 0010.607 10.607z"/>
+      </svg>
+      <input id="search" type="text" placeholder="Filter by IP, vendor, alias…"
+        class="w-full pl-9 pr-3 py-2 rounded-lg bg-gray-800 border border-gray-700
+               text-sm text-gray-200 placeholder-gray-500 focus:outline-none
+               focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+    </div>
+    <span class="text-xs text-gray-600" id="filter-count"></span>
+  </div>
+
+  <!-- Device table -->
+  <div class="rounded-xl border border-gray-800 overflow-hidden bg-gray-900">
+    <div id="table-loading" class="flex items-center justify-center py-16 text-gray-600 gap-2">
+      <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+      </svg>
+      <span class="text-sm">Scanning network…</span>
+    </div>
+
+    <table id="device-table" class="w-full text-sm hidden">
+      <thead>
+        <tr class="border-b border-gray-800 text-xs text-gray-500 uppercase tracking-wider">
+          <th class="px-4 py-3 text-left w-8"></th>
+          <th class="px-4 py-3 text-left">IP Address</th>
+          <th class="px-4 py-3 text-left">MAC Address</th>
+          <th class="px-4 py-3 text-left">Vendor</th>
+          <th class="px-4 py-3 text-left">Type</th>
+          <th class="px-4 py-3 text-left">Name / Alias</th>
+          <th class="px-4 py-3 text-left">Last Seen</th>
+          <th class="px-4 py-3 text-left w-6"></th>
+        </tr>
+      </thead>
+      <tbody id="device-tbody"></tbody>
+    </table>
+
+    <div id="table-empty" class="hidden flex-col items-center justify-center py-16 text-center gap-2">
+      <svg class="w-10 h-10 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <p class="text-gray-500 text-sm">No devices found.</p>
+      <p class="text-gray-600 text-xs">Check that the scanner is running with sufficient privileges.</p>
+    </div>
+  </div>
+</main>
+
+<!-- ═══════════════════════════════════════ OVERLAY ══ -->
+<div id="overlay" class="fixed inset-0 bg-black/60 z-40 hidden opacity-0 pointer-events-none"></div>
+
+<!-- ═══════════════════════════════════════ SIDE PANEL ══ -->
+<aside id="panel"
+  class="fixed top-0 right-0 h-full z-50 w-full sm:w-[520px] bg-gray-900 border-l border-gray-800
+         shadow-2xl flex flex-col panel-enter overflow-hidden">
+
+  <!-- Panel header -->
+  <div class="flex items-start justify-between gap-3 px-6 pt-6 pb-4 border-b border-gray-800 flex-shrink-0">
+    <div class="min-w-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span id="panel-type-badge" class="badge"></span>
+        <h2 id="panel-name" class="text-base font-semibold text-gray-100 truncate"></h2>
+      </div>
+      <p id="panel-ip" class="text-sm text-gray-400 mt-1 font-mono"></p>
+      <p id="panel-mac" class="text-xs text-gray-600 font-mono mt-0.5"></p>
+      <p id="panel-vendor" class="text-xs text-gray-500 mt-0.5"></p>
+    </div>
+    <button id="panel-close"
+      class="flex-shrink-0 p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors">
+      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Alias editor -->
+  <div class="px-6 py-3 border-b border-gray-800 flex-shrink-0">
+    <label class="text-xs text-gray-500 uppercase tracking-wider">Custom Alias</label>
+    <div class="flex gap-2 mt-1.5">
+      <input id="alias-input" type="text" placeholder="e.g. Living Room TV"
+        class="flex-1 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-sm
+               text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-2
+               focus:ring-indigo-500 focus:border-transparent" />
+      <button id="alias-save"
+        class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500
+               text-white transition-colors whitespace-nowrap">
+        Save
+      </button>
+    </div>
+    <p id="alias-msg" class="text-xs mt-1 h-4"></p>
+  </div>
+
+  <!-- Log viewer -->
+  <div class="flex flex-col flex-1 min-h-0">
+    <div class="flex items-center justify-between px-6 py-3 border-b border-gray-800 flex-shrink-0">
+      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Syslog History</h3>
+      <div class="flex items-center gap-2">
+        <span id="log-count" class="text-xs text-gray-600"></span>
+        <button id="log-refresh"
+          class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+          </svg>
+          Reload
+        </button>
+      </div>
+    </div>
+
+    <!-- Log list -->
+    <div id="log-container" class="flex-1 overflow-y-auto px-4 py-3 space-y-1">
+      <div id="log-loading" class="flex items-center gap-2 py-8 justify-center text-gray-600 text-sm">
+        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+        </svg>
+        Loading logs…
+      </div>
+      <div id="log-empty" class="hidden py-8 text-center text-gray-600 text-sm">
+        <svg class="w-8 h-8 mx-auto mb-2 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/>
+        </svg>
+        No syslogs received from this device yet.
+      </div>
+      <div id="log-list"></div>
+    </div>
+
+    <!-- Severity legend -->
+    <div class="px-6 py-3 border-t border-gray-800 flex-shrink-0">
+      <div class="flex items-center gap-3 flex-wrap text-xs text-gray-600">
+        <span class="font-medium text-gray-500">Severity:</span>
+        <span class="flex items-center gap-1"><span class="dot bg-red-500 w-2 h-2"></span>critical</span>
+        <span class="flex items-center gap-1"><span class="dot bg-orange-500 w-2 h-2"></span>error</span>
+        <span class="flex items-center gap-1"><span class="dot bg-yellow-500 w-2 h-2"></span>warning</span>
+        <span class="flex items-center gap-1"><span class="dot bg-blue-500 w-2 h-2"></span>notice</span>
+        <span class="flex items-center gap-1"><span class="dot bg-gray-500 w-2 h-2"></span>info</span>
+        <span class="flex items-center gap-1"><span class="dot bg-gray-700 w-2 h-2"></span>debug</span>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══════════════════════════════════════════ SCRIPT ══ -->
+<script>
+'use strict';
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const REFRESH_INTERVAL_MS = 30_000;
+
+const TYPE_BADGE = {
+  'bare-metal':       { cls: 'bg-gray-700 text-gray-300 border border-gray-600',    label: 'Bare-metal' },
+  'docker-container': { cls: 'bg-cyan-950 text-cyan-300 border border-cyan-800',     label: 'Docker' },
+  'vm':               { cls: 'bg-amber-950 text-amber-300 border border-amber-800',  label: 'VM' },
+  'lxc':              { cls: 'bg-purple-950 text-purple-300 border border-purple-800', label: 'LXC' },
+};
+
+const SEVERITY_STYLE = {
+  emergency: { row: 'border-red-700 bg-red-950/60',   badge: 'bg-red-900 text-red-300',    dot: 'bg-red-500' },
+  alert:     { row: 'border-red-700 bg-red-950/60',   badge: 'bg-red-900 text-red-300',    dot: 'bg-red-500' },
+  critical:  { row: 'border-red-700 bg-red-950/60',   badge: 'bg-red-900 text-red-300',    dot: 'bg-red-500' },
+  error:     { row: 'border-orange-700 bg-orange-950/40', badge: 'bg-orange-900 text-orange-300', dot: 'bg-orange-500' },
+  warning:   { row: 'border-yellow-700 bg-yellow-950/40', badge: 'bg-yellow-900 text-yellow-300', dot: 'bg-yellow-500' },
+  notice:    { row: 'border-blue-700 bg-blue-950/40', badge: 'bg-blue-900 text-blue-300',   dot: 'bg-blue-500' },
+  info:      { row: 'border-gray-700 bg-gray-800/40', badge: 'bg-gray-700 text-gray-300',   dot: 'bg-gray-500' },
+  debug:     { row: 'border-gray-800 bg-gray-900/60', badge: 'bg-gray-800 text-gray-600',   dot: 'bg-gray-700' },
+};
+
+const fallbackSeverityStyle = SEVERITY_STYLE.info;
+
+// ── State ──────────────────────────────────────────────────────────────────
+
+let allDevices = [];
+let activeDevice = null;
+let refreshTimer = null;
+
+// ── Utilities ─────────────────────────────────────────────────────────────
+
+function relativeTime(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 0)  return 'just now';
+  const s = Math.floor(diff / 1000);
+  if (s < 60)    return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60)    return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24)    return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function formatTs(iso) {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    });
+  } catch { return iso; }
+}
+
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str ?? '';
+  return d.innerHTML;
+}
+
+function isRecent(iso, thresholdMs = 10 * 60_000) {
+  return (Date.now() - new Date(iso).getTime()) < thresholdMs;
+}
+
+// ── Device table ──────────────────────────────────────────────────────────
+
+async function fetchDevices() {
+  const icon = document.getElementById('refresh-icon');
+  icon.classList.add('animate-spin');
+  try {
+    const res = await fetch('/api/devices');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    allDevices = await res.json();
+    renderTable(allDevices);
+    updateStats(allDevices);
+    document.getElementById('last-updated').textContent = `Updated ${relativeTime(new Date().toISOString())}`;
+  } catch (err) {
+    console.error('Failed to fetch devices:', err);
+    document.getElementById('last-updated').textContent = 'Update failed';
+  } finally {
+    icon.classList.remove('animate-spin');
+  }
+}
+
+function updateStats(devices) {
+  const counts = { 'bare-metal': 0, 'docker-container': 0, vm: 0, lxc: 0 };
+  for (const d of devices) counts[d.device_type] = (counts[d.device_type] ?? 0) + 1;
+  document.getElementById('count-total').textContent  = devices.length;
+  document.getElementById('count-bm').textContent     = counts['bare-metal'];
+  document.getElementById('count-docker').textContent = counts['docker-container'];
+  document.getElementById('count-vm').textContent     = counts.vm;
+  document.getElementById('count-lxc').textContent    = counts.lxc;
+}
+
+function renderTable(devices) {
+  const loading = document.getElementById('table-loading');
+  const table   = document.getElementById('device-table');
+  const empty   = document.getElementById('table-empty');
+  const tbody   = document.getElementById('device-tbody');
+  const search  = document.getElementById('search').value.toLowerCase().trim();
+
+  const filtered = search
+    ? devices.filter(d =>
+        (d.ip       ?? '').toLowerCase().includes(search) ||
+        (d.mac      ?? '').toLowerCase().includes(search) ||
+        (d.vendor   ?? '').toLowerCase().includes(search) ||
+        (d.alias    ?? '').toLowerCase().includes(search) ||
+        (d.name     ?? '').toLowerCase().includes(search))
+    : devices;
+
+  loading.classList.add('hidden');
+
+  if (filtered.length === 0) {
+    table.classList.add('hidden');
+    empty.classList.remove('hidden');
+    empty.classList.add('flex');
+    document.getElementById('filter-count').textContent = '';
+    return;
+  }
+
+  empty.classList.add('hidden');
+  empty.classList.remove('flex');
+  table.classList.remove('hidden');
+
+  document.getElementById('filter-count').textContent =
+    search ? `${filtered.length} of ${devices.length} devices` : '';
+
+  tbody.innerHTML = filtered.map(d => deviceRow(d)).join('');
+
+  // Attach click handlers
+  tbody.querySelectorAll('tr.device-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const mac = row.dataset.mac;
+      const device = allDevices.find(d => d.mac === mac);
+      if (device) openPanel(device);
+    });
+  });
+}
+
+function deviceRow(d) {
+  const badge   = TYPE_BADGE[d.device_type] ?? TYPE_BADGE['bare-metal'];
+  const recent  = isRecent(d.last_seen);
+  const display = d.alias || d.name || '–';
+
+  return `<tr class="device-row border-t border-gray-800/60" data-mac="${esc(d.mac)}">
+    <td class="px-4 py-3">
+      <span class="dot ${recent ? 'bg-emerald-500 live-dot' : 'bg-gray-700'}" title="${recent ? 'Active' : 'Idle'}"></span>
+    </td>
+    <td class="px-4 py-3 font-mono text-indigo-300 font-medium">${esc(d.ip)}</td>
+    <td class="px-4 py-3 font-mono text-xs text-gray-400">${esc(d.mac)}</td>
+    <td class="px-4 py-3 text-gray-300 text-xs max-w-[180px] truncate" title="${esc(d.vendor)}">${esc(d.vendor)}</td>
+    <td class="px-4 py-3"><span class="badge ${badge.cls}">${badge.label}</span></td>
+    <td class="px-4 py-3 text-gray-300 text-xs">${esc(display)}</td>
+    <td class="px-4 py-3 text-xs text-gray-500" title="${esc(d.last_seen)}">${relativeTime(d.last_seen)}</td>
+    <td class="px-4 py-3 text-gray-600">
+      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/>
+      </svg>
+    </td>
+  </tr>`;
+}
+
+// ── Side panel ────────────────────────────────────────────────────────────
+
+function openPanel(device) {
+  activeDevice = device;
+
+  // Populate header
+  const badge = TYPE_BADGE[device.device_type] ?? TYPE_BADGE['bare-metal'];
+  const panelBadge = document.getElementById('panel-type-badge');
+  panelBadge.className = `badge ${badge.cls}`;
+  panelBadge.textContent = badge.label;
+
+  const displayName = device.alias || device.name || device.ip;
+  document.getElementById('panel-name').textContent    = displayName;
+  document.getElementById('panel-ip').textContent      = device.ip;
+  document.getElementById('panel-mac').textContent     = device.mac;
+  document.getElementById('panel-vendor').textContent  = device.vendor || '–';
+  document.getElementById('alias-input').value         = device.alias || '';
+  document.getElementById('alias-msg').textContent     = '';
+
+  // Show panel
+  const panel   = document.getElementById('panel');
+  const overlay = document.getElementById('overlay');
+  overlay.classList.remove('hidden');
+  requestAnimationFrame(() => {
+    overlay.classList.remove('opacity-0');
+    overlay.classList.remove('pointer-events-none');
+    panel.classList.remove('panel-enter');
+    panel.classList.add('panel-open');
+  });
+
+  // Load logs
+  fetchLogs(device.ip);
+}
+
+function closePanel() {
+  const panel   = document.getElementById('panel');
+  const overlay = document.getElementById('overlay');
+  panel.classList.remove('panel-open');
+  panel.classList.add('panel-enter');
+  overlay.classList.add('opacity-0');
+  overlay.classList.add('pointer-events-none');
+  setTimeout(() => overlay.classList.add('hidden'), 280);
+  activeDevice = null;
+}
+
+// ── Log viewer ────────────────────────────────────────────────────────────
+
+async function fetchLogs(ip) {
+  const loading   = document.getElementById('log-loading');
+  const empty     = document.getElementById('log-empty');
+  const list      = document.getElementById('log-list');
+  const countEl   = document.getElementById('log-count');
+
+  loading.classList.remove('hidden');
+  empty.classList.add('hidden');
+  list.innerHTML = '';
+  countEl.textContent = '';
+
+  try {
+    const res = await fetch(`/api/logs/${encodeURIComponent(ip)}`);
+
+    if (res.status === 404) {
+      loading.classList.add('hidden');
+      empty.classList.remove('hidden');
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const logs = await res.json();
+    loading.classList.add('hidden');
+
+    if (logs.length === 0) {
+      empty.classList.remove('hidden');
+      return;
+    }
+
+    countEl.textContent = `${logs.length} entries`;
+    list.innerHTML = logs.map(logRow).join('');
+  } catch (err) {
+    loading.classList.add('hidden');
+    list.innerHTML = `<p class="text-xs text-red-400 py-4 text-center">Failed to load logs: ${esc(err.message)}</p>`;
+  }
+}
+
+function logRow(log) {
+  const style = SEVERITY_STYLE[log.severity] ?? fallbackSeverityStyle;
+  return `<div class="log-row rounded-lg px-3 py-2 ${style.row} flex gap-2.5 items-start">
+    <span class="dot ${style.dot} mt-1.5 flex-shrink-0 w-2 h-2"></span>
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="badge ${style.badge} text-[10px] px-1.5 py-0.5">${esc(log.severity)}</span>
+        <span class="text-[10px] text-gray-500">${formatTs(log.timestamp)}</span>
+      </div>
+      <p class="text-xs text-gray-200 mt-1 break-words leading-relaxed font-mono">${esc(log.message)}</p>
+    </div>
+  </div>`;
+}
+
+// ── Alias saving ──────────────────────────────────────────────────────────
+
+async function saveAlias() {
+  if (!activeDevice) return;
+  const input   = document.getElementById('alias-input');
+  const msgEl   = document.getElementById('alias-msg');
+  const alias   = input.value.trim();
+
+  try {
+    const res = await fetch(`/api/devices/${encodeURIComponent(activeDevice.mac)}/alias`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alias }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    // Optimistically update local state
+    const dev = allDevices.find(d => d.mac === activeDevice.mac);
+    if (dev) dev.alias = alias;
+    activeDevice.alias = alias;
+    document.getElementById('panel-name').textContent = alias || activeDevice.name || activeDevice.ip;
+
+    msgEl.textContent = 'Saved.';
+    msgEl.className   = 'text-xs mt-1 h-4 text-emerald-400';
+    renderTable(allDevices);
+    setTimeout(() => { msgEl.textContent = ''; }, 2500);
+  } catch (err) {
+    msgEl.textContent = `Error: ${err.message}`;
+    msgEl.className   = 'text-xs mt-1 h-4 text-red-400';
+  }
+}
+
+// ── Event wiring ──────────────────────────────────────────────────────────
+
+document.getElementById('btn-refresh').addEventListener('click', fetchDevices);
+document.getElementById('panel-close').addEventListener('click', closePanel);
+document.getElementById('overlay').addEventListener('click', closePanel);
+document.getElementById('alias-save').addEventListener('click', saveAlias);
+document.getElementById('alias-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') saveAlias();
+});
+document.getElementById('log-refresh').addEventListener('click', () => {
+  if (activeDevice) fetchLogs(activeDevice.ip);
+});
+document.getElementById('search').addEventListener('input', () => renderTable(allDevices));
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && activeDevice) closePanel();
+});
+
+// ── Auto-refresh ──────────────────────────────────────────────────────────
+
+function startAutoRefresh() {
+  refreshTimer = setInterval(() => {
+    fetchDevices();
+    // Silently refresh open panel logs too
+    if (activeDevice) fetchLogs(activeDevice.ip);
+  }, REFRESH_INTERVAL_MS);
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+
+fetchDevices().then(startAutoRefresh);
+</script>
+</body>
+</html>

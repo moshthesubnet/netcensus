@@ -39,7 +39,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.database import get_all_devices, get_logs_for_ip, init_db, set_device_alias, upsert_device
@@ -179,9 +180,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Network Monitor API",
     description="ARP-based network scanner with Docker/Proxmox enrichment and syslog receiver",
-    version="0.3.5",
+    version="0.4.0",
     lifespan=lifespan,
 )
+
+# Serve the frontend directory (CSS, JS, assets if added later)
+_FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +262,13 @@ async def update_alias(mac: str, body: AliasRequest) -> JSONResponse:
     if not updated:
         raise HTTPException(status_code=404, detail=f"Device {mac} not found")
     return JSONResponse({"mac": mac, "alias": body.alias})
+
+
+@app.get("/", include_in_schema=False)
+async def dashboard() -> FileResponse:
+    """Serve the single-page dashboard."""
+    index = os.path.join(_FRONTEND_DIR, "index.html")
+    return FileResponse(index, media_type="text/html")
 
 
 @app.get("/api/health", include_in_schema=False)
