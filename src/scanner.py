@@ -83,6 +83,9 @@ async def arp_scan(
         return raw_devices
 
     # Fan out: OUI lookup + Docker + Proxmox all run concurrently
+    async def _no_proxmox() -> dict:
+        return {}
+
     proxmox_coro = (
         query_proxmox(
             proxmox.host,
@@ -93,7 +96,7 @@ async def arp_scan(
             verify_ssl=proxmox.verify_ssl,
         )
         if proxmox
-        else asyncio.coroutine(lambda: {})()  # empty awaitable
+        else _no_proxmox()
     )
 
     vendors, docker_map, proxmox_map = await asyncio.gather(
