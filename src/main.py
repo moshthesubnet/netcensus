@@ -1,30 +1,34 @@
 """
-FastAPI application — Phase 3.
+FastAPI application — Phase 3.5.
 
 Endpoints
 ---------
-GET  /api/devices            List all known devices from the database.
-GET  /api/logs/{ip_address}  Last 50 syslog entries for a device IP.
+GET  /api/devices              List all known devices from the database.
+GET  /api/logs/{ip_address}    Last 50 syslog entries for a device IP.
 PUT  /api/devices/{mac}/alias  Set a human-readable alias for a device.
 
-Background task
----------------
-Runs an ARP scan every SCAN_INTERVAL_SECONDS (default 300) and upserts
-results into the devices table. Requires the process to have raw-socket
-privileges (run with sudo or set CAP_NET_RAW).
+Concurrent background services (all managed by the lifespan)
+-------------------------------------------------------------
+1. ARP scan loop  — runs every SCAN_INTERVAL_SECONDS, upserts devices table.
+                    Requires raw-socket privileges (sudo / CAP_NET_RAW).
+2. Syslog server  — UDP DatagramProtocol on SYSLOG_PORT (default 514).
+                    Parses RFC 3164/5424 + OPNsense filterlog, writes syslogs table.
+                    Port 514 requires root / CAP_NET_BIND_SERVICE.
 
 Configuration via environment variables
 ----------------------------------------
-SUBNET               CIDR to scan          (default: auto-detected /24)
-SCAN_IFACE           Network interface     (default: system default)
-SCAN_INTERVAL_SECONDS  Seconds between scans (default: 300)
-DB_PATH              SQLite file path      (default: network_monitor.db)
-PROXMOX_HOST         Proxmox host          (optional)
-PROXMOX_USER         Proxmox user          (default: root@pam)
-PROXMOX_PASSWORD     Password auth         (optional)
-PROXMOX_TOKEN_ID     Token id              (optional)
-PROXMOX_TOKEN_SECRET Token secret          (optional)
-PROXMOX_VERIFY_SSL   Verify TLS cert       (default: false)
+SUBNET                 CIDR to scan            (default: auto-detected /24)
+SCAN_IFACE             Network interface       (default: system default)
+SCAN_INTERVAL_SECONDS  Seconds between scans   (default: 300)
+DB_PATH                SQLite file path        (default: network_monitor.db)
+SYSLOG_HOST            Syslog bind address     (default: 0.0.0.0)
+SYSLOG_PORT            Syslog UDP port         (default: 514)
+PROXMOX_HOST           Proxmox host            (optional)
+PROXMOX_USER           Proxmox user            (default: root@pam)
+PROXMOX_PASSWORD       Password auth           (optional)
+PROXMOX_TOKEN_ID       Token id                (optional)
+PROXMOX_TOKEN_SECRET   Token secret            (optional)
+PROXMOX_VERIFY_SSL     Verify TLS cert         (default: false)
 """
 
 import asyncio
@@ -40,6 +44,7 @@ from pydantic import BaseModel
 
 from src.database import get_all_devices, get_logs_for_ip, init_db, set_device_alias, upsert_device
 from src.scanner import ProxmoxConfig, arp_scan
+from src.syslog_server import start_syslog_server
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,8 @@ def _detect_subnet() -> str:
 SUBNET = os.environ.get("SUBNET", _detect_subnet())
 SCAN_IFACE = os.environ.get("SCAN_IFACE") or None
 SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL_SECONDS", "300"))
+SYSLOG_HOST = os.environ.get("SYSLOG_HOST", "0.0.0.0")
+SYSLOG_PORT = int(os.environ.get("SYSLOG_PORT", "514"))
 
 
 def _build_proxmox_config() -> ProxmoxConfig | None:
@@ -127,22 +134,42 @@ async def _scan_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 1. Database
     await init_db()
     logger.info("Database initialised at %s", os.path.abspath(
         os.environ.get("DB_PATH", "network_monitor.db")
     ))
 
+    # 2. Syslog UDP server
+    syslog_transport = None
+    try:
+        syslog_transport = await start_syslog_server(SYSLOG_HOST, SYSLOG_PORT)
+    except PermissionError:
+        logger.error(
+            "Cannot bind UDP port %d — re-run with sudo or set "
+            "SYSLOG_PORT to a value > 1023 for unprivileged testing.",
+            SYSLOG_PORT,
+        )
+    except OSError as exc:
+        logger.error("Syslog server failed to start: %s", exc)
+
+    # 3. Background ARP scan loop
     scan_task = asyncio.create_task(_scan_loop())
 
     try:
         yield
     finally:
+        # Shut down in reverse order
         scan_task.cancel()
         try:
             await scan_task
         except asyncio.CancelledError:
             pass
         logger.info("Background scanner stopped")
+
+        if syslog_transport:
+            syslog_transport.close()
+            logger.info("Syslog UDP server stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +178,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Network Monitor API",
-    description="ARP-based network scanner with Docker and Proxmox enrichment",
-    version="0.3.0",
+    description="ARP-based network scanner with Docker/Proxmox enrichment and syslog receiver",
+    version="0.3.5",
     lifespan=lifespan,
 )
 
