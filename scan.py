@@ -56,8 +56,8 @@ def parse_args() -> argparse.Namespace:
     # Scan options
     p.add_argument("subnet", nargs="?", default=detected,
                    help=f"CIDR subnet to scan (default: {detected})")
-    p.add_argument("--iface", default=None,
-                   help="Network interface, e.g. eth0, vmbr0.10")
+    p.add_argument("--iface", default=os.environ.get("SCAN_IFACE"),
+                   help="Network interface, e.g. eth0, vmbr0.10  [env: SCAN_IFACE]")
     p.add_argument("--timeout", type=int, default=2,
                    help="ARP reply timeout in seconds (default: 2)")
     p.add_argument("--json", action="store_true",
@@ -148,7 +148,9 @@ async def main() -> None:
         sys.exit(1)
 
     if not args.json:
+        iface_display = args.iface or "(system default — set --iface or SCAN_IFACE to override)"
         print(f"\nScanning {network} ...")
+        print(f"  Interface: {iface_display}")
         print(f"  Docker   : {'disabled' if args.no_docker else 'enabled'}")
         print(f"  Proxmox  : {args.proxmox_host or 'not configured'}\n")
 

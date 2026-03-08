@@ -63,7 +63,9 @@ async def arp_scan(
         timeout:   Seconds to wait for ARP replies.
         proxmox:   Optional Proxmox connection config. Pass None to skip.
     """
-    logger.info("Starting ARP scan on %s (iface=%s)", subnet, interface or "default")
+    iface_display = interface or "(system default)"
+    logger.info("Starting ARP scan on %s (iface=%s)", subnet, iface_display)
+    print(f"[ARP scan] subnet={subnet}  interface={iface_display}  timeout={timeout}s", flush=True)
 
     arp_request = ARP(pdst=subnet)
     broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")
@@ -75,6 +77,7 @@ async def arp_scan(
 
     loop = asyncio.get_event_loop()
     answered, _ = await loop.run_in_executor(None, lambda: srp(packet, **kwargs))
+    print(f"[ARP scan] complete — {len(answered)} reply/replies received", flush=True)
 
     raw_devices = [Device(ip=recv.psrc, mac=recv.hwsrc) for _, recv in answered]
     logger.info("ARP scan complete — %d device(s) found", len(raw_devices))
