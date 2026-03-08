@@ -248,12 +248,24 @@
 
 const REFRESH_INTERVAL_MS = 30_000;
 
+// All Tailwind classes must be spelled out in full so the CDN scanner keeps them.
+// Each entry carries a `counter` key that maps to the header stat chip it feeds.
 const TYPE_BADGE = {
-  'bare-metal':       { cls: 'bg-gray-700 text-gray-300 border border-gray-600',    label: 'Bare-metal' },
-  'docker-container': { cls: 'bg-cyan-950 text-cyan-300 border border-cyan-800',     label: 'Docker' },
-  'vm':               { cls: 'bg-amber-950 text-amber-300 border border-amber-800',  label: 'VM' },
-  'lxc':              { cls: 'bg-purple-950 text-purple-300 border border-purple-800', label: 'LXC' },
+  'bare-metal':       { cls: 'bg-gray-700 text-gray-300 border border-gray-600',          label: 'Bare-metal',  counter: 'bm'     },
+  'firewall':         { cls: 'bg-red-950 text-red-300 border border-red-800',             label: 'Firewall',    counter: 'bm'     },
+  'iot':              { cls: 'bg-emerald-950 text-emerald-300 border border-emerald-800',  label: 'IoT',         counter: 'bm'     },
+  'docker-container': { cls: 'bg-cyan-950 text-cyan-300 border border-cyan-800',          label: 'Docker',      counter: 'docker' },
+  'container':        { cls: 'bg-cyan-950 text-cyan-300 border border-cyan-800',          label: 'Container',   counter: 'docker' },
+  'vm':               { cls: 'bg-amber-950 text-amber-300 border border-amber-800',       label: 'VM',          counter: 'vm'     },
+  'hypervisor':       { cls: 'bg-amber-950 text-amber-300 border border-amber-800',       label: 'Hypervisor',  counter: 'vm'     },
+  'lxc':              { cls: 'bg-purple-950 text-purple-300 border border-purple-800',    label: 'LXC',         counter: 'lxc'   },
 };
+
+// Normalise the raw device_type string from the API into a TYPE_BADGE key.
+// Handles mixed-case values (e.g. "Container", "IoT", "bare-metal").
+function normalizeType(raw) {
+  return (raw ?? 'bare-metal').toLowerCase().replace(/\s+/g, '-');
+}
 
 const SEVERITY_STYLE = {
   emergency: { row: 'border-red-700 bg-red-950/60',   badge: 'bg-red-900 text-red-300',    dot: 'bg-red-500' },
@@ -329,11 +341,14 @@ async function fetchDevices() {
 }
 
 function updateStats(devices) {
-  const counts = { 'bare-metal': 0, 'docker-container': 0, vm: 0, lxc: 0 };
-  for (const d of devices) counts[d.device_type] = (counts[d.device_type] ?? 0) + 1;
+  const counts = { bm: 0, docker: 0, vm: 0, lxc: 0 };
+  for (const d of devices) {
+    const entry = TYPE_BADGE[normalizeType(d.device_type)] ?? TYPE_BADGE['bare-metal'];
+    counts[entry.counter] = (counts[entry.counter] ?? 0) + 1;
+  }
   document.getElementById('count-total').textContent  = devices.length;
-  document.getElementById('count-bm').textContent     = counts['bare-metal'];
-  document.getElementById('count-docker').textContent = counts['docker-container'];
+  document.getElementById('count-bm').textContent     = counts.bm;
+  document.getElementById('count-docker').textContent = counts.docker;
   document.getElementById('count-vm').textContent     = counts.vm;
   document.getElementById('count-lxc').textContent    = counts.lxc;
 }
@@ -384,7 +399,7 @@ function renderTable(devices) {
 }
 
 function deviceRow(d) {
-  const badge   = TYPE_BADGE[d.device_type] ?? TYPE_BADGE['bare-metal'];
+  const badge   = TYPE_BADGE[normalizeType(d.device_type)] ?? TYPE_BADGE['bare-metal'];
   const recent  = isRecent(d.last_seen);
   const display = d.alias || d.name || '–';
 
@@ -412,7 +427,7 @@ function openPanel(device) {
   activeDevice = device;
 
   // Populate header
-  const badge = TYPE_BADGE[device.device_type] ?? TYPE_BADGE['bare-metal'];
+  const badge = TYPE_BADGE[normalizeType(device.device_type)] ?? TYPE_BADGE['bare-metal'];
   const panelBadge = document.getElementById('panel-type-badge');
   panelBadge.className = `badge ${badge.cls}`;
   panelBadge.textContent = badge.label;
