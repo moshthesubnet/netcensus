@@ -67,6 +67,11 @@ def _detect_subnet() -> str:
 SUBNET = os.environ.get("SUBNET", _detect_subnet())
 SCAN_IFACE = os.environ.get("SCAN_IFACE") or None
 SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL_SECONDS", "300"))
+# Comma-separated Docker host URLs, e.g. "tcp://10.30.30.13:2375,tcp://10.30.30.14:2375"
+# Leave unset to use the local unix socket only.
+DOCKER_HOSTS: list[str] = [
+    h.strip() for h in os.environ.get("DOCKER_HOSTS", "").split(",") if h.strip()
+]
 SYSLOG_HOST = os.environ.get("SYSLOG_HOST", "0.0.0.0")
 SYSLOG_PORT = int(os.environ.get("SYSLOG_PORT", "514"))
 
@@ -97,6 +102,7 @@ async def _run_scan_once() -> int:
         interface=SCAN_IFACE,
         timeout=2,
         proxmox=proxmox_cfg,
+        docker_hosts=DOCKER_HOSTS or None,
     )
     for d in devices:
         await upsert_device(
@@ -110,9 +116,10 @@ async def _run_scan_once() -> int:
 
 async def _scan_loop() -> None:
     """Repeatedly scan the network, sleeping SCAN_INTERVAL seconds between runs."""
+    docker_display = ", ".join(DOCKER_HOSTS) if DOCKER_HOSTS else "unix:///var/run/docker.sock"
     logger.info(
-        "Background scanner starting — subnet=%s  interval=%ds  iface=%s",
-        SUBNET, SCAN_INTERVAL, SCAN_IFACE or "default",
+        "Background scanner starting — subnet=%s  interval=%ds  iface=%s  docker=%s",
+        SUBNET, SCAN_INTERVAL, SCAN_IFACE or "default", docker_display,
     )
     while True:
         try:

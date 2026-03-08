@@ -53,6 +53,7 @@ async def arp_scan(
     interface: str | None = None,
     timeout: int = 2,
     proxmox: ProxmoxConfig | None = None,
+    docker_hosts: list[str] | None = None,
 ) -> list[Device]:
     """
     Perform an ARP scan then enrich results with Docker and Proxmox data.
@@ -104,7 +105,7 @@ async def arp_scan(
 
     vendors, docker_map, proxmox_map = await asyncio.gather(
         asyncio.gather(*[lookup_vendor(d.mac) for d in raw_devices]),
-        query_docker(),
+        query_docker(docker_hosts),
         proxmox_coro,
     )
 

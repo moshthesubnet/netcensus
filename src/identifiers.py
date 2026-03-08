@@ -57,15 +57,18 @@ class DockerInfo:
     networks: list[str]
 
 
-async def query_docker() -> dict[str, DockerInfo]:
+async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
     """
-    Connect to the local Docker socket and enumerate running containers.
+    Enumerate running containers from one or more Docker hosts.
 
-    Returns a dict keyed by container IP address. Containers with multiple
-    network interfaces appear once per IP. Skips containers with no IP
-    (host-network or stopped).
+    Args:
+        hosts: List of Docker base URLs to query, e.g.
+               ['tcp://10.30.30.13:2375', 'unix:///var/run/docker.sock'].
+               If None or empty, falls back to the local socket
+               at unix:///var/run/docker.sock.
 
-    Requires read access to /var/run/docker.sock.
+    Returns a dict keyed by container IP address. Results from all hosts
+    are merged; later hosts win on IP collision.
     """
     try:
         import docker  # type: ignore
@@ -73,11 +76,14 @@ async def query_docker() -> dict[str, DockerInfo]:
         logger.warning("docker SDK not installed — skipping Docker discovery")
         return {}
 
-    def _fetch() -> dict[str, DockerInfo]:
+    targets: list[str] = hosts if hosts else ["unix:///var/run/docker.sock"]
+
+    def _fetch_one(base_url: str) -> dict[str, DockerInfo]:
+        """Query a single Docker host and return its container IP map."""
         try:
-            client = docker.DockerClient(base_url="unix:///var/run/docker.sock", timeout=5)
+            client = docker.DockerClient(base_url=base_url, timeout=5)
         except Exception as exc:
-            logger.warning("Cannot connect to Docker socket: %s", exc)
+            logger.warning("Cannot connect to Docker host %s: %s", base_url, exc)
             return {}
 
         result: dict[str, DockerInfo] = {}
@@ -89,7 +95,7 @@ async def query_docker() -> dict[str, DockerInfo]:
                 image_tags = container.image.tags
                 image = image_tags[0] if image_tags else container.image.short_id
 
-                for net_name, net_cfg in networks.items():
+                for _net_name, net_cfg in networks.items():
                     ip = net_cfg.get("IPAddress", "")
                     if not ip:
                         continue
@@ -103,16 +109,20 @@ async def query_docker() -> dict[str, DockerInfo]:
         finally:
             client.close()
 
+        logger.info("Docker %s: found %d container IP(s)", base_url, len(result))
         return result
 
     loop = asyncio.get_event_loop()
-    try:
-        result = await loop.run_in_executor(None, _fetch)
-        logger.info("Docker: found %d container IP(s)", len(result))
-        return result
-    except Exception as exc:
-        logger.warning("Docker query error: %s", exc)
-        return {}
+    merged: dict[str, DockerInfo] = {}
+    for base_url in targets:
+        try:
+            partial = await loop.run_in_executor(None, _fetch_one, base_url)
+            merged.update(partial)
+        except Exception as exc:
+            logger.warning("Docker query error for %s: %s", base_url, exc)
+
+    logger.info("Docker total: %d unique container IP(s) across %d host(s)", len(merged), len(targets))
+    return merged
 
 
 # ---------------------------------------------------------------------------
