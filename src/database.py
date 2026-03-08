@@ -9,6 +9,7 @@ syslogs  — append-only syslog messages keyed by source IP.
 All timestamps are stored as ISO-8601 UTC strings so they sort lexically.
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -31,13 +32,19 @@ DB_PATH: str = os.environ.get(
 
 _CREATE_DEVICES = """
 CREATE TABLE IF NOT EXISTS devices (
-    mac         TEXT PRIMARY KEY,
-    ip          TEXT,
-    vendor      TEXT NOT NULL DEFAULT 'Unknown',
-    device_type TEXT NOT NULL DEFAULT 'bare-metal',
-    alias       TEXT,
-    first_seen  TEXT,
-    last_seen   TEXT NOT NULL
+    mac                 TEXT    PRIMARY KEY,
+    ip                  TEXT,
+    vendor              TEXT    NOT NULL DEFAULT 'Unknown',
+    device_type         TEXT    NOT NULL DEFAULT 'bare-metal',
+    custom_type         TEXT,
+    alias               TEXT,
+    notes               TEXT,
+    first_seen          TEXT,
+    last_seen           TEXT    NOT NULL,
+    metadata            TEXT,
+    ipv6                TEXT,
+    disappearance_count INTEGER NOT NULL DEFAULT 0,
+    scan_count          INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -89,13 +96,23 @@ async def _migrate_devices_ip_nullable(db: aiosqlite.Connection) -> None:
     logger.info("Migration complete: devices.ip is now nullable")
 
 
-async def _migrate_add_first_seen(db: aiosqlite.Connection) -> None:
-    """Add the first_seen column to existing databases that predate P2 fixes."""
+async def _migrate_add_columns(db: aiosqlite.Connection) -> None:
+    """Add columns introduced after the initial schema (safe to run repeatedly)."""
     async with db.execute("PRAGMA table_info(devices)") as cur:
         cols = [row[1] for row in await cur.fetchall()]
-    if "first_seen" not in cols:
-        await db.execute("ALTER TABLE devices ADD COLUMN first_seen TEXT")
-        logger.info("Migration complete: added first_seen column to devices")
+    additions = {
+        "first_seen":          "ALTER TABLE devices ADD COLUMN first_seen TEXT",
+        "metadata":            "ALTER TABLE devices ADD COLUMN metadata TEXT",
+        "ipv6":                "ALTER TABLE devices ADD COLUMN ipv6 TEXT",
+        "custom_type":         "ALTER TABLE devices ADD COLUMN custom_type TEXT",
+        "disappearance_count": "ALTER TABLE devices ADD COLUMN disappearance_count INTEGER NOT NULL DEFAULT 0",
+        "notes":               "ALTER TABLE devices ADD COLUMN notes TEXT",
+        "scan_count":          "ALTER TABLE devices ADD COLUMN scan_count INTEGER NOT NULL DEFAULT 0",
+    }
+    for col, ddl in additions.items():
+        if col not in cols:
+            await db.execute(ddl)
+            logger.info("Migration complete: added %s column to devices", col)
 
 
 async def init_db() -> None:
@@ -105,7 +122,7 @@ async def init_db() -> None:
         await db.execute(_CREATE_DEVICES)
         await db.execute(_CREATE_SYSLOGS)
         await db.execute(_IDX_SYSLOGS_IP)
-        await _migrate_add_first_seen(db)
+        await _migrate_add_columns(db)
         await db.commit()
 
 
@@ -118,27 +135,34 @@ async def upsert_device(
     ip: str | None,
     vendor: str,
     device_type: str,
+    metadata: dict | None = None,
+    ipv6: str | None = None,
 ) -> None:
     """
     Insert or update a device row.
-    - The alias column is intentionally excluded so manual aliases survive scans.
-    - A NULL ip never overwrites a real IP already stored in the DB
-      (allows Proxmox/Docker sources to upsert type/vendor without clobbering
-      an IP that was discovered later by ARP).
+    - alias and custom_type are excluded from updates so manual values survive scans.
+    - A NULL ip/ipv6 never overwrites a real address already stored in the DB.
+    - metadata is overwritten when provided; NULL leaves existing metadata intact.
+    - disappearance_count is reset to 0 whenever a device is seen (ON CONFLICT).
     """
     now = datetime.now(timezone.utc).isoformat()
+    meta_json = json.dumps(metadata) if metadata is not None else None
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
-            INSERT INTO devices (mac, ip, vendor, device_type, first_seen, last_seen)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO devices (mac, ip, vendor, device_type, first_seen, last_seen, metadata, ipv6, scan_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
             ON CONFLICT(mac) DO UPDATE SET
-                ip          = CASE WHEN excluded.ip IS NOT NULL THEN excluded.ip ELSE ip END,
-                vendor      = excluded.vendor,
-                device_type = excluded.device_type,
-                last_seen   = excluded.last_seen
+                ip                  = CASE WHEN excluded.ip       IS NOT NULL THEN excluded.ip       ELSE ip       END,
+                vendor              = excluded.vendor,
+                device_type         = excluded.device_type,
+                last_seen           = excluded.last_seen,
+                metadata            = CASE WHEN excluded.metadata IS NOT NULL THEN excluded.metadata ELSE metadata END,
+                ipv6                = CASE WHEN excluded.ipv6     IS NOT NULL THEN excluded.ipv6     ELSE ipv6     END,
+                disappearance_count = 0,
+                scan_count          = scan_count + 1
             """,
-            (mac, ip, vendor, device_type, now, now),
+            (mac, ip, vendor, device_type, now, now, meta_json, ipv6),
         )
         await db.commit()
 
@@ -154,6 +178,56 @@ async def set_hostname_if_unset(mac: str, hostname: str) -> None:
             (hostname, mac),
         )
         await db.commit()
+
+
+async def set_custom_type(mac: str, custom_type: str | None) -> bool:
+    """
+    Override a device's type with a user-supplied value.
+    Pass None or empty string to clear the override (revert to auto-detected type).
+    Returns False if the MAC doesn't exist.
+    """
+    value = custom_type if custom_type else None
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE devices SET custom_type = ? WHERE mac = ?", (value, mac)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def update_disappearance_counts(seen_macs: set[str]) -> None:
+    """
+    Increment disappearance_count for every device NOT present in seen_macs.
+    Called once per scan cycle after all upserts are complete.
+    (Devices that WERE seen have their count reset to 0 by the upsert itself.)
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        if not seen_macs:
+            await db.execute(
+                "UPDATE devices SET disappearance_count = disappearance_count + 1"
+            )
+        else:
+            placeholders = ",".join("?" * len(seen_macs))
+            await db.execute(
+                f"UPDATE devices SET disappearance_count = disappearance_count + 1"
+                f" WHERE mac NOT IN ({placeholders})",
+                list(seen_macs),
+            )
+        await db.commit()
+
+
+async def set_device_notes(mac: str, notes: str | None) -> bool:
+    """
+    Set or clear the free-text notes for a device.
+    Returns False if the MAC doesn't exist.
+    """
+    value = notes if notes else None
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE devices SET notes = ? WHERE mac = ?", (value, mac)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
 
 
 async def set_device_alias(mac: str, alias: str) -> bool:
@@ -172,22 +246,60 @@ async def set_device_alias(mac: str, alias: str) -> bool:
 async def get_all_devices(
     limit: int | None = None,
     offset: int = 0,
+    device_type: str | None = None,
+    search: str | None = None,
+    since: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Return device rows ordered by most recently seen.
-    Optionally paginated via limit/offset (default: all rows).
+
+    Filters (all optional):
+      device_type  Match against COALESCE(custom_type, device_type).
+      search       LIKE match across ip, mac, alias, vendor, ipv6.
+      since        ISO-8601 timestamp; only rows with last_seen >= since.
+    Paginated via limit/offset (default: all rows).
     """
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if device_type:
+        conditions.append("COALESCE(custom_type, device_type) = ?")
+        params.append(device_type)
+    if search:
+        term = f"%{search}%"
+        conditions.append(
+            "(ip LIKE ? OR mac LIKE ? OR alias LIKE ? OR vendor LIKE ? OR ipv6 LIKE ?)"
+        )
+        params.extend([term, term, term, term, term])
+    if since:
+        conditions.append("last_seen >= ?")
+        params.append(since)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    query = f"SELECT * FROM devices {where} ORDER BY last_seen DESC"
+
+    if limit is not None:
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        if limit is not None:
-            query = "SELECT * FROM devices ORDER BY last_seen DESC LIMIT ? OFFSET ?"
-            params: tuple = (limit, offset)
-        else:
-            query = "SELECT * FROM devices ORDER BY last_seen DESC"
-            params = ()
         async with db.execute(query, params) as cursor:
             rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+
+    result = []
+    for r in rows:
+        row = dict(r)
+        # Deserialise JSON metadata blob
+        if row.get("metadata"):
+            try:
+                row["metadata"] = json.loads(row["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                row["metadata"] = None
+        # Expose the effective type (custom overrides auto-detected)
+        row["effective_type"] = row.get("custom_type") or row.get("device_type") or "bare-metal"
+        result.append(row)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +340,30 @@ async def get_logs_for_ip(
             LIMIT ?
             """,
             (ip, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def search_syslogs(
+    q: str,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """
+    Full-text search across all syslog entries (message and source_ip).
+    Returns up to `limit` rows ordered by newest first.
+    """
+    term = f"%{q}%"
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT * FROM syslogs
+            WHERE message LIKE ? OR source_ip LIKE ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (term, term, limit),
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]

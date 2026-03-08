@@ -170,3 +170,67 @@ async def query_opnsense_dhcp(
 
     logger.info("OPNsense DHCP leases: %d hostname(s) from %s", len(result), base_url)
     return result
+
+
+_NDP_ENDPOINT = "/api/diagnostics/interface/getNdp"
+
+
+async def query_opnsense_ndp(
+    url: str | None = None,
+    key: str | None = None,
+    secret: str | None = None,
+) -> dict[str, str]:
+    """
+    Fetch the global NDP (IPv6 neighbour) table from OPNsense.
+
+    Returns a dict mapping lowercase MAC address → IPv6 address, covering
+    every VLAN that OPNsense routes — giving full IPv6 visibility to match
+    the ARP table used for IPv4.
+    Empty dict on any connection or auth failure.
+    """
+    base_url = (url or os.environ.get("OPNSENSE_URL", "")).rstrip("/")
+    api_key  = key    or os.environ.get("OPNSENSE_KEY",    "")
+    api_sec  = secret or os.environ.get("OPNSENSE_SECRET", "")
+
+    if not base_url or not api_key or not api_sec:
+        return {}
+
+    endpoint = f"{base_url}{_NDP_ENDPOINT}"
+
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+            resp = await client.get(endpoint, auth=(api_key, api_sec))
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.warning("OPNsense NDP API returned HTTP %s for %s", exc.response.status_code, endpoint)
+        return {}
+    except httpx.RequestError as exc:
+        logger.warning("OPNsense NDP request failed (%s): %s", endpoint, exc)
+        return {}
+
+    try:
+        data = resp.json()
+    except Exception as exc:
+        logger.warning("OPNsense NDP response is not valid JSON: %s", exc)
+        return {}
+
+    # Response shape mirrors ARP: list of entries or {"ndp": [...]}
+    entries = data if isinstance(data, list) else data.get("ndp", [])
+
+    result: dict[str, str] = {}
+    for entry in entries:
+        mac = str(entry.get("mac", "")).strip().lower()
+        ip  = str(entry.get("ip",  "")).strip()
+
+        if not mac or not ip or len(mac) != 17:
+            continue
+        if mac in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"):
+            continue
+        # Skip link-local — they're not useful for device identification
+        if ip.startswith("fe80:") or ip.startswith("FE80:"):
+            continue
+
+        result[mac] = ip
+
+    logger.info("OPNsense NDP table: %d valid entries from %s", len(result), base_url)
+    return result
