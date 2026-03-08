@@ -76,6 +76,23 @@
       </span>
     </div>
 
+    <!-- Source health chips -->
+    <div id="source-health" class="flex items-center gap-2 flex-wrap text-xs text-gray-500">
+      <span class="text-gray-600 font-medium">Sources:</span>
+      <span class="source-chip flex items-center gap-1" data-source="opnsense_arp">
+        <span class="dot bg-gray-600 w-2 h-2"></span><span>OPNsense ARP</span>
+      </span>
+      <span class="source-chip flex items-center gap-1" data-source="opnsense_dhcp">
+        <span class="dot bg-gray-600 w-2 h-2"></span><span>DHCP</span>
+      </span>
+      <span class="source-chip flex items-center gap-1" data-source="proxmox">
+        <span class="dot bg-gray-600 w-2 h-2"></span><span>Proxmox</span>
+      </span>
+      <span class="source-chip flex items-center gap-1" data-source="docker">
+        <span class="dot bg-gray-600 w-2 h-2"></span><span>Docker</span>
+      </span>
+    </div>
+
     <!-- Refresh controls -->
     <div class="flex items-center gap-3">
       <span class="flex items-center gap-1.5 text-xs text-gray-500">
@@ -165,6 +182,7 @@
       <p id="panel-ip" class="text-sm text-gray-400 mt-1 font-mono"></p>
       <p id="panel-mac" class="text-xs text-gray-600 font-mono mt-0.5"></p>
       <p id="panel-vendor" class="text-xs text-gray-500 mt-0.5"></p>
+      <p id="panel-first-seen" class="text-xs text-gray-600 mt-0.5"></p>
     </div>
     <button id="panel-close"
       class="flex-shrink-0 p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors">
@@ -407,7 +425,7 @@ function deviceRow(d) {
     <td class="px-4 py-3">
       <span class="dot ${recent ? 'bg-emerald-500 live-dot' : 'bg-gray-700'}" title="${recent ? 'Active' : 'Idle'}"></span>
     </td>
-    <td class="px-4 py-3 font-mono text-indigo-300 font-medium">${esc(d.ip)}</td>
+    <td class="px-4 py-3 font-mono text-indigo-300 font-medium">${esc(d.ip ?? '—')}</td>
     <td class="px-4 py-3 font-mono text-xs text-gray-400">${esc(d.mac)}</td>
     <td class="px-4 py-3 text-gray-300 text-xs max-w-[180px] truncate" title="${esc(d.vendor)}">${esc(d.vendor)}</td>
     <td class="px-4 py-3"><span class="badge ${badge.cls}">${badge.label}</span></td>
@@ -432,11 +450,15 @@ function openPanel(device) {
   panelBadge.className = `badge ${badge.cls}`;
   panelBadge.textContent = badge.label;
 
-  const displayName = device.alias || device.name || device.ip;
+  const displayName = device.alias || device.name || device.ip || device.mac;
   document.getElementById('panel-name').textContent    = displayName;
-  document.getElementById('panel-ip').textContent      = device.ip;
+  document.getElementById('panel-ip').textContent      = device.ip ?? '—';
   document.getElementById('panel-mac').textContent     = device.mac;
   document.getElementById('panel-vendor').textContent  = device.vendor || '–';
+  const firstSeenEl = document.getElementById('panel-first-seen');
+  firstSeenEl.textContent = device.first_seen
+    ? `First seen: ${relativeTime(device.first_seen)}`
+    : '';
   document.getElementById('alias-input').value         = device.alias || '';
   document.getElementById('alias-msg').textContent     = '';
 
@@ -451,8 +473,13 @@ function openPanel(device) {
     panel.classList.add('panel-open');
   });
 
-  // Load logs
-  fetchLogs(device.ip);
+  // Load logs (skip if IP unknown — no syslog can be attributed without one)
+  if (device.ip) {
+    fetchLogs(device.ip);
+  } else {
+    document.getElementById('log-loading').classList.add('hidden');
+    document.getElementById('log-empty').classList.remove('hidden');
+  }
 }
 
 function closePanel() {
@@ -569,19 +596,48 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && activeDevice) closePanel();
 });
 
+// ── Source health ─────────────────────────────────────────────────────────
+
+const SOURCE_STATUS_DOT = {
+  ok:      'bg-emerald-500',
+  stale:   'bg-yellow-500',
+  degraded: 'bg-yellow-500',
+  unknown: 'bg-gray-600',
+};
+
+async function fetchHealth() {
+  try {
+    const res = await fetch('/api/health');
+    if (!res.ok) return;
+    const data = await res.json();
+    for (const chip of document.querySelectorAll('.source-chip')) {
+      const src = chip.dataset.source;
+      const info = data.sources?.[src];
+      if (!info) continue;
+      const dot = chip.querySelector('.dot');
+      dot.className = `dot w-2 h-2 ${SOURCE_STATUS_DOT[info.status] ?? 'bg-gray-600'}`;
+      const count = info.last_count ?? 0;
+      const label = info.last_ok ? `${count} items · ${relativeTime(info.last_ok)}` : 'no data yet';
+      chip.title = `${src}: ${info.status} — ${label}`;
+    }
+  } catch { /* health endpoint optional */ }
+}
+
 // ── Auto-refresh ──────────────────────────────────────────────────────────
 
 function startAutoRefresh() {
   refreshTimer = setInterval(() => {
     fetchDevices();
+    fetchHealth();
     // Silently refresh open panel logs too
-    if (activeDevice) fetchLogs(activeDevice.ip);
+    if (activeDevice?.ip) fetchLogs(activeDevice.ip);
   }, REFRESH_INTERVAL_MS);
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 
 fetchDevices().then(startAutoRefresh);
+fetchHealth();
 </script>
 </body>
 </html>

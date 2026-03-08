@@ -55,7 +55,9 @@ class DockerInfo:
     image: str
     status: str
     networks: list[str]
-    mac: str = ""          # MAC address of the container's network interface
+    mac: str = ""           # MAC address of the container's network interface
+    network_mode: str = "bridge"  # "host" for --network host containers
+    host_ip: str = ""       # Docker daemon host IP; set only for host-net containers
 
 
 async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
@@ -87,6 +89,11 @@ async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
             logger.warning("Cannot connect to Docker host %s: %s", base_url, exc)
             return {}
 
+        # Extract the host IP from TCP URLs for host-network container attribution.
+        host_ip = ""
+        if base_url.startswith("tcp://"):
+            host_ip = base_url.split("://", 1)[1].split(":")[0]
+
         result: dict[str, DockerInfo] = {}
         try:
             for container in client.containers.list():
@@ -95,6 +102,23 @@ async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
                 net_names = list(networks.keys())
                 image_tags = container.image.tags
                 image = image_tags[0] if image_tags else container.image.short_id
+                network_mode = attrs.get("HostConfig", {}).get("NetworkMode", "bridge")
+
+                # Host-networked containers share the daemon host's IP/MAC.
+                # Store them under a synthetic key so they don't collide with
+                # bridge containers; main.py resolves them via the ARP table.
+                if network_mode == "host":
+                    if host_ip:
+                        result[f"hostnet:{container.short_id}"] = DockerInfo(
+                            name=container.name,
+                            container_id=container.short_id,
+                            image=image,
+                            status=container.status,
+                            networks=["host"],
+                            network_mode="host",
+                            host_ip=host_ip,
+                        )
+                    continue
 
                 for _net_name, net_cfg in networks.items():
                     ip = net_cfg.get("IPAddress", "")

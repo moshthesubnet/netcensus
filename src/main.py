@@ -35,16 +35,17 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from src.database import get_all_devices, get_logs_for_ip, init_db, set_device_alias, upsert_device
+from src.database import get_all_devices, get_logs_for_ip, init_db, purge_old_syslogs, set_device_alias, set_hostname_if_unset, upsert_device
 from src.identifiers import query_docker, query_proxmox
-from src.opnsense import query_opnsense
+from src.opnsense import query_opnsense, query_opnsense_dhcp
 from src.syslog_server import start_syslog_server
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,25 @@ SYSLOG_PORT = int(os.environ.get("SYSLOG_PORT", "514"))
 
 
 # ---------------------------------------------------------------------------
+# Source health tracking  (in-memory, reset on restart)
+# ---------------------------------------------------------------------------
+
+_source_health: dict[str, dict[str, Any]] = {
+    "opnsense_arp":  {"last_ok": None, "last_count": 0},
+    "opnsense_dhcp": {"last_ok": None, "last_count": 0},
+    "proxmox":       {"last_ok": None, "last_count": 0},
+    "docker":        {"last_ok": None, "last_count": 0},
+}
+
+
+def _record_source(name: str, count: int) -> None:
+    """Update health tracking for a discovery source after each scan."""
+    _source_health[name]["last_count"] = count
+    if count > 0:
+        _source_health[name]["last_ok"] = datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
 # Background scan loop
 # ---------------------------------------------------------------------------
 
@@ -106,13 +126,17 @@ async def _run_scan_once() -> int:
 
     All three sources are fetched concurrently.
     """
-    opnsense_task = query_opnsense()
-    proxmox_task  = query_proxmox(PROXMOX_NODES)
-    docker_task   = query_docker(DOCKER_HOSTS or None)
-
-    arp_map, proxmox_map, docker_map = await asyncio.gather(
-        opnsense_task, proxmox_task, docker_task,
+    arp_map, proxmox_map, docker_map, dhcp_map = await asyncio.gather(
+        query_opnsense(),
+        query_proxmox(PROXMOX_NODES),
+        query_docker(DOCKER_HOSTS or None),
+        query_opnsense_dhcp(),
     )
+
+    _record_source("opnsense_arp",  len(arp_map))
+    _record_source("opnsense_dhcp", len(dhcp_map))
+    _record_source("proxmox",       len(proxmox_map))
+    _record_source("docker",        len(docker_map))
 
     # ── 1. Merge OPNsense ARP table with Proxmox inventory ───────────────────
     # OPNsense supplies the authoritative IP; Proxmox supplies type and name.
@@ -127,6 +151,13 @@ async def _run_scan_once() -> int:
             device_type = "bare-metal"
             vendor      = "Unknown"
         await upsert_device(mac=mac, ip=arp_ip, vendor=vendor, device_type=device_type)
+
+        # Assign name/hostname as alias if none is set yet (manual aliases win)
+        if proxmox_info:
+            await set_hostname_if_unset(mac, proxmox_info.name)
+        elif mac in dhcp_map:
+            await set_hostname_if_unset(mac, dhcp_map[mac])
+
         opnsense_upserted += 1
 
     # ── 2. Upsert Proxmox guests not yet seen in OPNsense ARP ─────────────────
@@ -135,24 +166,47 @@ async def _run_scan_once() -> int:
     proxmox_only = 0
     for mac, info in proxmox_map.items():
         if mac not in arp_map:
-            fallback_ip = info.ip or ""  # guest agent / LXC interfaces IP, if found
             await upsert_device(
                 mac=mac,
-                ip=fallback_ip,
+                ip=info.ip,   # None if guest agent/LXC interfaces unavailable
                 vendor="Proxmox",
                 device_type=info.type,
             )
+            await set_hostname_if_unset(mac, info.name)
             proxmox_only += 1
 
     # ── 3. Upsert Docker containers (cross-VLAN, independent of ARP) ──────────
+    # Build a reverse ARP map (IP → MAC) once for host-net container lookups.
+    _ip_to_mac = {ip: mac for mac, ip in arp_map.items()}
+
     docker_upserted = 0
-    for ip, info in docker_map.items():
+    for key, info in docker_map.items():
+        if info.network_mode == "host":
+            # Host-networked containers share the daemon host's network stack.
+            # Enrich the host's existing device row if it appears in the ARP table.
+            host_mac = _ip_to_mac.get(info.host_ip)
+            if host_mac:
+                await upsert_device(
+                    mac=host_mac,
+                    ip=info.host_ip,
+                    vendor="Docker",
+                    device_type="docker-container",
+                )
+                await set_hostname_if_unset(host_mac, info.name)
+                docker_upserted += 1
+            else:
+                logger.debug(
+                    "Docker host-net container %s: host %s not in ARP — skipping",
+                    info.name, info.host_ip,
+                )
+            continue
+
         if not info.mac:
-            logger.debug("Docker container %s (%s) has no MAC — skipping", info.name, ip)
+            logger.debug("Docker container %s (%s) has no MAC — skipping", info.name, key)
             continue
         await upsert_device(
             mac=info.mac,
-            ip=ip,
+            ip=key,
             vendor="Docker",
             device_type="docker-container",
         )
@@ -185,6 +239,11 @@ async def _scan_loop() -> None:
             )
         except Exception as exc:
             logger.exception("Scan failed (will retry in %ds): %s", SCAN_INTERVAL, exc)
+
+        try:
+            await purge_old_syslogs()
+        except Exception as exc:
+            logger.warning("Syslog purge failed: %s", exc)
 
         await asyncio.sleep(SCAN_INTERVAL)
 
@@ -259,10 +318,11 @@ class AliasRequest(BaseModel):
 
 class DeviceResponse(BaseModel):
     mac: str
-    ip: str
+    ip: str | None
     vendor: str
     device_type: str
     alias: str | None
+    first_seen: str | None
     last_seen: str
 
 
@@ -283,11 +343,15 @@ class SyslogResponse(BaseModel):
     response_model=list[DeviceResponse],
     summary="List all known devices",
 )
-async def list_devices() -> list[dict[str, Any]]:
+async def list_devices(
+    limit: int | None = Query(default=None, ge=1, description="Max rows to return"),
+    offset: int = Query(default=0, ge=0, description="Rows to skip (for pagination)"),
+) -> list[dict[str, Any]]:
     """
-    Returns every device row from the database, ordered by most recently seen.
+    Returns device rows from the database, ordered by most recently seen.
+    Optionally paginated: use `limit` and `offset` query parameters.
     """
-    return await get_all_devices()
+    return await get_all_devices(limit=limit, offset=offset)
 
 
 @app.get(
@@ -331,6 +395,34 @@ async def dashboard() -> FileResponse:
     return FileResponse(index, media_type="text/html")
 
 
-@app.get("/api/health", include_in_schema=False)
+@app.get("/api/health", summary="Discovery source health status")
 async def health() -> JSONResponse:
-    return JSONResponse({"status": "ok"})
+    """
+    Returns the operational status of each discovery source.
+
+    A source is **ok** if it returned results within the last two scan intervals.
+    **stale** means it hasn't returned data recently (possible config/connectivity issue).
+    **unknown** means no scan has completed since startup.
+    """
+    now = datetime.now(timezone.utc)
+    stale_threshold = SCAN_INTERVAL * 2
+
+    sources: dict[str, Any] = {}
+    for name, info in _source_health.items():
+        last_ok: str | None = info["last_ok"]
+        if last_ok is None:
+            status = "unknown"
+        else:
+            age = (now - datetime.fromisoformat(last_ok)).total_seconds()
+            status = "ok" if age <= stale_threshold else "stale"
+        sources[name] = {
+            "status": status,
+            "last_ok": last_ok,
+            "last_count": info["last_count"],
+        }
+
+    any_unknown = any(s["status"] == "unknown" for s in sources.values())
+    any_stale   = any(s["status"] == "stale"   for s in sources.values())
+    overall = "unknown" if any_unknown else ("degraded" if any_stale else "ok")
+
+    return JSONResponse({"status": overall, "sources": sources})
