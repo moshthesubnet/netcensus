@@ -148,7 +148,7 @@ def _parse_mac(net_str: str, vm_type: str) -> str | None:
 
 
 async def query_proxmox(
-    host: str,
+    hosts: list[str],
     user: str,
     *,
     password: str | None = None,
@@ -157,26 +157,30 @@ async def query_proxmox(
     verify_ssl: bool = False,
 ) -> dict[str, ProxmoxInfo]:
     """
-    Poll the Proxmox API for all QEMU VMs and LXC containers across every node.
+    Poll one or more Proxmox hosts for all QEMU VMs and LXC containers.
 
-    Returns a dict keyed by MAC address (lowercase, colon-separated).
-    Provide either (password) or (token_id + token_secret) for auth.
+    All hosts are queried concurrently. Results are merged into one dict
+    keyed by MAC address (lowercase). Later hosts win on MAC collision.
 
     Args:
-        host:         Proxmox hostname or IP.
+        hosts:        List of Proxmox hostnames/IPs to query.
         user:         API user, e.g. 'root@pam' or 'monitor@pve'.
         password:     Password auth (mutually exclusive with token_*).
-        token_id:     API token id, e.g. 'root@pam!mytoken'.
+        token_id:     Full API token id, e.g. 'root@pam!mytoken'.
         token_secret: API token UUID secret.
         verify_ssl:   Verify TLS certificate (default False for self-signed).
     """
+    if not hosts:
+        return {}
+
     try:
         from proxmoxer import ProxmoxAPI  # type: ignore
     except ImportError:
         logger.warning("proxmoxer not installed — skipping Proxmox discovery")
         return {}
 
-    def _fetch() -> dict[str, ProxmoxInfo]:
+    def _fetch_one(host: str) -> dict[str, ProxmoxInfo]:
+        """Query a single Proxmox host and return its MAC → ProxmoxInfo map."""
         try:
             if token_id and token_secret:
                 proxmox = ProxmoxAPI(
@@ -188,10 +192,7 @@ async def query_proxmox(
                 )
             else:
                 proxmox = ProxmoxAPI(
-                    host,
-                    user=user,
-                    password=password,
-                    verify_ssl=verify_ssl,
+                    host, user=user, password=password, verify_ssl=verify_ssl,
                 )
         except Exception as exc:
             logger.warning("Proxmox connection failed (%s): %s", host, exc)
@@ -202,7 +203,7 @@ async def query_proxmox(
         try:
             nodes = proxmox.nodes.get()
         except Exception as exc:
-            logger.warning("Proxmox nodes.get() failed: %s", exc)
+            logger.warning("Proxmox nodes.get() failed (%s): %s", host, exc)
             return {}
 
         for node_info in nodes:
@@ -212,7 +213,7 @@ async def query_proxmox(
             try:
                 vms = proxmox.nodes(node).qemu.get()
             except Exception as exc:
-                logger.debug("Could not list VMs on node %s: %s", node, exc)
+                logger.debug("Could not list VMs on %s/%s: %s", host, node, exc)
                 vms = []
 
             for vm in vms:
@@ -222,7 +223,6 @@ async def query_proxmox(
                 except Exception:
                     continue
 
-                # Iterate net0..net31
                 for key, val in config.items():
                     if not key.startswith("net"):
                         continue
@@ -240,7 +240,7 @@ async def query_proxmox(
             try:
                 lxcs = proxmox.nodes(node).lxc.get()
             except Exception as exc:
-                logger.debug("Could not list LXCs on node %s: %s", node, exc)
+                logger.debug("Could not list LXCs on %s/%s: %s", host, node, exc)
                 lxcs = []
 
             for lxc in lxcs:
@@ -263,12 +263,25 @@ async def query_proxmox(
                             status=lxc.get("status", "unknown"),
                         )
 
-        logger.info("Proxmox: found %d MAC(s) across %d node(s)", len(result), len(nodes))
+        logger.info("Proxmox %s: found %d MAC(s) across %d node(s)", host, len(result), len(nodes))
         return result
 
     loop = asyncio.get_event_loop()
-    try:
-        return await loop.run_in_executor(None, _fetch)
-    except Exception as exc:
-        logger.warning("Proxmox query error: %s", exc)
-        return {}
+    # Fan out across all hosts concurrently
+    partials = await asyncio.gather(
+        *[loop.run_in_executor(None, _fetch_one, host) for host in hosts],
+        return_exceptions=True,
+    )
+
+    merged: dict[str, ProxmoxInfo] = {}
+    for host, partial in zip(hosts, partials):
+        if isinstance(partial, Exception):
+            logger.warning("Proxmox query error for %s: %s", host, partial)
+        else:
+            merged.update(partial)  # type: ignore[arg-type]
+
+    logger.info(
+        "Proxmox total: %d unique MAC(s) across %d host(s)",
+        len(merged), len(hosts),
+    )
+    return merged

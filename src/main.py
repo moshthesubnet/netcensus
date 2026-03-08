@@ -23,12 +23,13 @@ SCAN_INTERVAL_SECONDS  Seconds between scans   (default: 300)
 DB_PATH                SQLite file path        (default: network_monitor.db)
 SYSLOG_HOST            Syslog bind address     (default: 0.0.0.0)
 SYSLOG_PORT            Syslog UDP port         (default: 514)
-PROXMOX_HOST           Proxmox host            (optional)
-PROXMOX_USER           Proxmox user            (default: root@pam)
-PROXMOX_PASSWORD       Password auth           (optional)
-PROXMOX_TOKEN_ID       Token id                (optional)
-PROXMOX_TOKEN_SECRET   Token secret            (optional)
-PROXMOX_VERIFY_SSL     Verify TLS cert         (default: false)
+PROXMOX_HOSTS          Comma-separated Proxmox IPs  (optional, e.g. 10.0.99.10,10.0.99.11)
+PROXMOX_HOST           Single Proxmox IP (fallback if PROXMOX_HOSTS not set)
+PROXMOX_USER           Proxmox API user             (default: root@pam)
+PROXMOX_PASSWORD       Password auth                (optional)
+PROXMOX_TOKEN_ID       Full token id                (optional, e.g. user@pam!token)
+PROXMOX_TOKEN_SECRET   Token UUID secret            (optional)
+PROXMOX_VERIFY_SSL     Verify TLS cert              (default: false)
 """
 
 import asyncio
@@ -44,8 +45,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.database import get_all_devices, get_logs_for_ip, init_db, set_device_alias, upsert_device
-from src.identifiers import query_docker
-from src.scanner import ProxmoxConfig, arp_scan
+from src.identifiers import query_docker, query_proxmox
+from src.scanner import arp_scan
 from src.syslog_server import start_syslog_server
 
 logger = logging.getLogger(__name__)
@@ -73,22 +74,16 @@ SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL_SECONDS", "300"))
 DOCKER_HOSTS: list[str] = [
     h.strip() for h in os.environ.get("DOCKER_HOSTS", "").split(",") if h.strip()
 ]
+# PROXMOX_HOSTS takes a comma-separated list; falls back to singular PROXMOX_HOST
+_proxmox_hosts_raw = os.environ.get("PROXMOX_HOSTS") or os.environ.get("PROXMOX_HOST") or ""
+PROXMOX_HOSTS: list[str] = [h.strip() for h in _proxmox_hosts_raw.split(",") if h.strip()]
+PROXMOX_USER         = os.environ.get("PROXMOX_USER", "root@pam")
+PROXMOX_PASSWORD     = os.environ.get("PROXMOX_PASSWORD") or None
+PROXMOX_TOKEN_ID     = os.environ.get("PROXMOX_TOKEN_ID") or None
+PROXMOX_TOKEN_SECRET = os.environ.get("PROXMOX_TOKEN_SECRET") or None
+PROXMOX_VERIFY_SSL   = os.environ.get("PROXMOX_VERIFY_SSL", "").lower() in ("1", "true")
 SYSLOG_HOST = os.environ.get("SYSLOG_HOST", "0.0.0.0")
 SYSLOG_PORT = int(os.environ.get("SYSLOG_PORT", "514"))
-
-
-def _build_proxmox_config() -> ProxmoxConfig | None:
-    host = os.environ.get("PROXMOX_HOST")
-    if not host:
-        return None
-    return ProxmoxConfig(
-        host=host,
-        user=os.environ.get("PROXMOX_USER", "root@pam"),
-        password=os.environ.get("PROXMOX_PASSWORD"),
-        token_id=os.environ.get("PROXMOX_TOKEN_ID"),
-        token_secret=os.environ.get("PROXMOX_TOKEN_SECRET"),
-        verify_ssl=os.environ.get("PROXMOX_VERIFY_SSL", "").lower() in ("1", "true"),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -99,27 +94,62 @@ async def _run_scan_once() -> int:
     """
     Run one full discovery cycle and persist results. Returns total device count.
 
-    Two independent discovery paths run concurrently:
-      1. ARP scan  — finds devices on SUBNET, enriched with Proxmox MAC matching.
-      2. Docker    — queries DOCKER_HOSTS directly via TCP; upserts containers even
-                     when they live on a different VLAN and are invisible to ARP.
+    Three independent discovery paths run concurrently:
+      1. ARP scan    — raw layer-2 discovery on SUBNET/SCAN_IFACE.
+      2. Proxmox API — all VMs and LXCs across every PROXMOX_HOSTS entry,
+                       upserted directly so cross-VLAN guests are never missed.
+      3. Docker API  — all running containers across every DOCKER_HOSTS entry,
+                       upserted directly for the same cross-VLAN reason.
+
+    ARP results are enriched post-hoc using the Proxmox and Docker maps so
+    that devices visible on the local subnet also get the correct type label.
     """
-    proxmox_cfg = _build_proxmox_config()
-
-    # Run ARP+Proxmox and Docker discovery concurrently
-    arp_task    = arp_scan(SUBNET, interface=SCAN_IFACE, timeout=2, proxmox=proxmox_cfg, docker_hosts=None)
+    # ── Fan out all three sources concurrently ────────────────────────────────
+    arp_task = arp_scan(
+        SUBNET, interface=SCAN_IFACE, timeout=2,
+        proxmox=None, docker_hosts=None,   # enrichment handled here, not inside arp_scan
+    )
+    proxmox_task = query_proxmox(
+        PROXMOX_HOSTS,
+        PROXMOX_USER,
+        password=PROXMOX_PASSWORD,
+        token_id=PROXMOX_TOKEN_ID,
+        token_secret=PROXMOX_TOKEN_SECRET,
+        verify_ssl=PROXMOX_VERIFY_SSL,
+    )
     docker_task = query_docker(DOCKER_HOSTS or None)
-    devices, docker_map = await asyncio.gather(arp_task, docker_task)
 
-    # ── 1. Persist ARP-discovered devices (already Proxmox-enriched) ──────────
+    devices, proxmox_map, docker_map = await asyncio.gather(
+        arp_task, proxmox_task, docker_task,
+    )
+
+    # ── 1. Enrich + persist ARP-discovered devices ────────────────────────────
+    arp_upserted = 0
     for d in devices:
+        # Apply correct type from Proxmox/Docker maps when MAC/IP matches
+        if d.ip in docker_map:
+            d.type = "docker-container"
+        elif d.mac.lower() in proxmox_map:
+            d.type = proxmox_map[d.mac.lower()].type
         await upsert_device(mac=d.mac, ip=d.ip, vendor=d.vendor, device_type=d.type)
+        arp_upserted += 1
 
-    # ── 2. Persist Docker containers directly (cross-VLAN safe) ───────────────
+    # ── 2. Persist ALL Proxmox guests directly (cross-VLAN safe) ─────────────
+    proxmox_upserted = 0
+    for mac, info in proxmox_map.items():
+        await upsert_device(
+            mac=mac,
+            ip="",               # IP unknown until ARP sees it; preserved if already set
+            vendor="Proxmox",
+            device_type=info.type,
+        )
+        proxmox_upserted += 1
+
+    # ── 3. Persist Docker containers directly (cross-VLAN safe) ──────────────
     docker_upserted = 0
     for ip, info in docker_map.items():
         if not info.mac:
-            logger.debug("Docker container %s (%s) has no MAC — skipping upsert", info.name, ip)
+            logger.debug("Docker container %s (%s) has no MAC — skipping", info.name, ip)
             continue
         await upsert_device(
             mac=info.mac,
@@ -130,19 +160,23 @@ async def _run_scan_once() -> int:
         docker_upserted += 1
 
     logger.info(
-        "Scan complete: %d ARP device(s) | %d Docker container(s) upserted",
-        len(devices), docker_upserted,
+        "Scan complete: %d ARP | %d Proxmox | %d Docker  (%d total upserted)",
+        arp_upserted, proxmox_upserted, docker_upserted,
+        arp_upserted + proxmox_upserted + docker_upserted,
     )
-    return len(devices) + docker_upserted
+    return arp_upserted + proxmox_upserted + docker_upserted
 
 
 async def _scan_loop() -> None:
     """Repeatedly scan the network, sleeping SCAN_INTERVAL seconds between runs."""
-    docker_display = ", ".join(DOCKER_HOSTS) if DOCKER_HOSTS else "unix:///var/run/docker.sock"
+    docker_display  = ", ".join(DOCKER_HOSTS)  if DOCKER_HOSTS  else "unix socket (local)"
+    proxmox_display = ", ".join(PROXMOX_HOSTS) if PROXMOX_HOSTS else "not configured"
     logger.info(
-        "Background scanner starting — subnet=%s  interval=%ds  iface=%s  docker=%s",
-        SUBNET, SCAN_INTERVAL, SCAN_IFACE or "default", docker_display,
+        "Background scanner starting — subnet=%s  interval=%ds  iface=%s",
+        SUBNET, SCAN_INTERVAL, SCAN_IFACE or "default",
     )
+    logger.info("  Proxmox hosts : %s", proxmox_display)
+    logger.info("  Docker  hosts : %s", docker_display)
     while True:
         try:
             await _run_scan_once()

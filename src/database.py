@@ -73,7 +73,10 @@ async def upsert_device(
 ) -> None:
     """
     Insert or update a device row.
-    The alias column is intentionally excluded so manual aliases survive scans.
+    - The alias column is intentionally excluded so manual aliases survive scans.
+    - An empty ip string never overwrites a real IP already stored in the DB
+      (allows Proxmox/Docker sources to upsert type/vendor without clobbering
+      an IP that was discovered later by ARP).
     """
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
@@ -82,7 +85,7 @@ async def upsert_device(
             INSERT INTO devices (mac, ip, vendor, device_type, last_seen)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(mac) DO UPDATE SET
-                ip          = excluded.ip,
+                ip          = CASE WHEN excluded.ip != '' THEN excluded.ip ELSE ip END,
                 vendor      = excluded.vendor,
                 device_type = excluded.device_type,
                 last_seen   = excluded.last_seen
