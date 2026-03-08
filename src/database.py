@@ -15,7 +15,11 @@ from typing import Any
 
 import aiosqlite
 
-DB_PATH: str = os.environ.get("DB_PATH", "network_monitor.db")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH: str = os.environ.get(
+    "DB_PATH",
+    os.path.join(_PROJECT_ROOT, "network_monitor.db"),
+)
 
 
 # ---------------------------------------------------------------------------
