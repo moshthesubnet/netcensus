@@ -1,5 +1,5 @@
 """
-FastAPI application — Phase 3.5.
+FastAPI application.
 
 Endpoints
 ---------
@@ -9,30 +9,31 @@ PUT  /api/devices/{mac}/alias  Set a human-readable alias for a device.
 
 Concurrent background services (all managed by the lifespan)
 -------------------------------------------------------------
-1. ARP scan loop  — runs every SCAN_INTERVAL_SECONDS, upserts devices table.
-                    Requires raw-socket privileges (sudo / CAP_NET_RAW).
+1. Discovery loop — runs every SCAN_INTERVAL_SECONDS. Three sources run
+                    concurrently and are merged into the devices table:
+                    a. OPNsense  — global ARP table via REST API (all VLANs).
+                    b. Proxmox   — VM/LXC inventory via API (per-node creds).
+                    c. Docker    — running containers via TCP socket.
 2. Syslog server  — UDP DatagramProtocol on SYSLOG_PORT (default 514).
-                    Parses RFC 3164/5424 + OPNsense filterlog, writes syslogs table.
-                    Port 514 requires root / CAP_NET_BIND_SERVICE.
+                    Parses RFC 3164/5424 + OPNsense filterlog.
 
 Configuration via environment variables
 ----------------------------------------
-SUBNET                 CIDR to scan            (default: auto-detected /24)
-SCAN_IFACE             Network interface       (default: system default)
-SCAN_INTERVAL_SECONDS  Seconds between scans   (default: 300)
-DB_PATH                SQLite file path        (default: network_monitor.db)
-SYSLOG_HOST            Syslog bind address     (default: 0.0.0.0)
-SYSLOG_PORT            Syslog UDP port         (default: 514)
-PROXMOX_NODES          JSON array of per-host dicts (host, user, token_id, token_secret)
-                       e.g. [{"host":"10.0.99.10","user":"root@pam","token_id":"root@pam!tok","token_secret":"uuid"},
-                              {"host":"10.0.99.11","user":"root@pam","token_id":"root@pam!tok","token_secret":"uuid2"}]
+SCAN_INTERVAL_SECONDS  Seconds between discovery cycles  (default: 300)
+DB_PATH                SQLite file path                  (default: auto)
+SYSLOG_HOST            Syslog bind address               (default: 0.0.0.0)
+SYSLOG_PORT            Syslog UDP port                   (default: 514)
+OPNSENSE_URL           OPNsense base URL, e.g. https://10.0.99.1
+OPNSENSE_KEY           OPNsense API key   (Basic Auth username)
+OPNSENSE_SECRET        OPNsense API secret (Basic Auth password)
+PROXMOX_NODES          JSON array: [{"host":…,"user":…,"token_id":…,"token_secret":…}, …]
+DOCKER_HOSTS           Comma-separated TCP URIs, e.g. tcp://10.30.40.2:2375,…
 """
 
 import asyncio
 import json
 import logging
 import os
-import socket
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -43,7 +44,7 @@ from pydantic import BaseModel
 
 from src.database import get_all_devices, get_logs_for_ip, init_db, set_device_alias, upsert_device
 from src.identifiers import query_docker, query_proxmox
-from src.scanner import arp_scan
+from src.opnsense import query_opnsense
 from src.syslog_server import start_syslog_server
 
 logger = logging.getLogger(__name__)
@@ -52,19 +53,6 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-def _detect_subnet() -> str:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-        parts = ip.split(".")
-        return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
-    except Exception:
-        return "192.168.1.0/24"
-
-
-SUBNET = os.environ.get("SUBNET", _detect_subnet())
-SCAN_IFACE = os.environ.get("SCAN_IFACE") or None
 SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL_SECONDS", "300"))
 # Comma-separated Docker host URLs, e.g. "tcp://10.30.40.2:2375,tcp://10.30.40.4:2375,tcp://10.30.40.6:2375"
 # Leave unset to use the local unix socket only.
@@ -104,53 +92,56 @@ SYSLOG_PORT = int(os.environ.get("SYSLOG_PORT", "514"))
 
 async def _run_scan_once() -> int:
     """
-    Run one full discovery cycle and persist results. Returns total device count.
+    Run one full discovery cycle and persist results.
 
-    Three independent discovery paths run concurrently:
-      1. ARP scan    — raw layer-2 discovery on SUBNET/SCAN_IFACE.
-      2. Proxmox API — all VMs and LXCs across every PROXMOX_HOSTS entry,
-                       upserted directly so cross-VLAN guests are never missed.
-      3. Docker API  — all running containers across every DOCKER_HOSTS entry,
-                       upserted directly for the same cross-VLAN reason.
+    Merge logic
+    -----------
+    1. OPNsense  — global ARP table (MAC → IP) covering all VLANs.
+                   This is the base layer for physical hosts and VMs.
+    2. Proxmox   — inventory of all VMs/LXCs (MAC → ProxmoxInfo).
+                   Cross-referenced against the OPNsense map to assign IPs;
+                   also upserted directly so offline guests still appear.
+    3. Docker    — running containers (IP → DockerInfo + MAC).
+                   Upserted independently; they may live on a different VLAN.
 
-    ARP results are enriched post-hoc using the Proxmox and Docker maps so
-    that devices visible on the local subnet also get the correct type label.
+    All three sources are fetched concurrently.
     """
-    # ── Fan out all three sources concurrently ────────────────────────────────
-    arp_task = arp_scan(
-        SUBNET, interface=SCAN_IFACE, timeout=2,
-        proxmox=None, docker_hosts=None,   # enrichment handled here, not inside arp_scan
-    )
-    proxmox_task = query_proxmox(PROXMOX_NODES)
-    docker_task = query_docker(DOCKER_HOSTS or None)
+    opnsense_task = query_opnsense()
+    proxmox_task  = query_proxmox(PROXMOX_NODES)
+    docker_task   = query_docker(DOCKER_HOSTS or None)
 
-    devices, proxmox_map, docker_map = await asyncio.gather(
-        arp_task, proxmox_task, docker_task,
+    arp_map, proxmox_map, docker_map = await asyncio.gather(
+        opnsense_task, proxmox_task, docker_task,
     )
 
-    # ── 1. Enrich + persist ARP-discovered devices ────────────────────────────
-    arp_upserted = 0
-    for d in devices:
-        # Apply correct type from Proxmox/Docker maps when MAC/IP matches
-        if d.ip in docker_map:
-            d.type = "docker-container"
-        elif d.mac.lower() in proxmox_map:
-            d.type = proxmox_map[d.mac.lower()].type
-        await upsert_device(mac=d.mac, ip=d.ip, vendor=d.vendor, device_type=d.type)
-        arp_upserted += 1
+    # ── 1. Merge OPNsense ARP table with Proxmox inventory ───────────────────
+    # OPNsense knows the real IP; Proxmox knows the type and name.
+    opnsense_upserted = 0
+    for mac, ip in arp_map.items():
+        proxmox_info = proxmox_map.get(mac)
+        if proxmox_info:
+            device_type = proxmox_info.type   # "vm" or "lxc"
+            vendor      = "Proxmox"
+        else:
+            device_type = "bare-metal"
+            vendor      = "Unknown"
+        await upsert_device(mac=mac, ip=ip, vendor=vendor, device_type=device_type)
+        opnsense_upserted += 1
 
-    # ── 2. Persist ALL Proxmox guests directly (cross-VLAN safe) ─────────────
-    proxmox_upserted = 0
+    # ── 2. Upsert Proxmox guests not yet seen in OPNsense ARP ─────────────────
+    # Covers offline VMs and guests on VLANs the OPNsense ARP cache has aged out.
+    proxmox_only = 0
     for mac, info in proxmox_map.items():
-        await upsert_device(
-            mac=mac,
-            ip="",               # IP unknown until ARP sees it; preserved if already set
-            vendor="Proxmox",
-            device_type=info.type,
-        )
-        proxmox_upserted += 1
+        if mac not in arp_map:
+            await upsert_device(
+                mac=mac,
+                ip="",          # no IP known; preserved if a previous cycle set one
+                vendor="Proxmox",
+                device_type=info.type,
+            )
+            proxmox_only += 1
 
-    # ── 3. Persist Docker containers directly (cross-VLAN safe) ──────────────
+    # ── 3. Upsert Docker containers (cross-VLAN, independent of ARP) ──────────
     docker_upserted = 0
     for ip, info in docker_map.items():
         if not info.mac:
@@ -164,24 +155,23 @@ async def _run_scan_once() -> int:
         )
         docker_upserted += 1
 
+    total = opnsense_upserted + proxmox_only + docker_upserted
     logger.info(
-        "Scan complete: %d ARP | %d Proxmox | %d Docker  (%d total upserted)",
-        arp_upserted, proxmox_upserted, docker_upserted,
-        arp_upserted + proxmox_upserted + docker_upserted,
+        "Scan complete: %d OPNsense | %d Proxmox-only | %d Docker  (%d total upserted)",
+        opnsense_upserted, proxmox_only, docker_upserted, total,
     )
-    return arp_upserted + proxmox_upserted + docker_upserted
+    return total
 
 
 async def _scan_loop() -> None:
     """Repeatedly scan the network, sleeping SCAN_INTERVAL seconds between runs."""
-    docker_display  = ", ".join(DOCKER_HOSTS) if DOCKER_HOSTS else "unix socket (local)"
-    proxmox_display = ", ".join(n["host"] for n in PROXMOX_NODES) if PROXMOX_NODES else "not configured"
-    logger.info(
-        "Background scanner starting — subnet=%s  interval=%ds  iface=%s",
-        SUBNET, SCAN_INTERVAL, SCAN_IFACE or "default",
-    )
-    logger.info("  Proxmox hosts : %s", proxmox_display)
-    logger.info("  Docker  hosts : %s", docker_display)
+    opnsense_display = os.environ.get("OPNSENSE_URL", "not configured")
+    proxmox_display  = ", ".join(n["host"] for n in PROXMOX_NODES) if PROXMOX_NODES else "not configured"
+    docker_display   = ", ".join(DOCKER_HOSTS) if DOCKER_HOSTS else "unix socket (local)"
+    logger.info("Background discovery loop starting — interval=%ds", SCAN_INTERVAL)
+    logger.info("  OPNsense : %s", opnsense_display)
+    logger.info("  Proxmox  : %s", proxmox_display)
+    logger.info("  Docker   : %s", docker_display)
     while True:
         try:
             await _run_scan_once()
