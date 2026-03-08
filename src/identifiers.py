@@ -135,9 +135,61 @@ async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
 class ProxmoxInfo:
     name: str
     vm_id: int
-    type: str          # "vm" or "lxc"
+    type: str           # "vm" or "lxc"
     node: str
     status: str
+    ip: str | None = None  # best-effort IP from guest agent / LXC interfaces
+
+
+def _first_valid_ipv4(addr: str) -> str | None:
+    """Return addr if it is a routable IPv4 address, else None."""
+    a = addr.strip()
+    if not a:
+        return None
+    # Reject loopback and link-local
+    if a.startswith("127.") or a.startswith("169.254."):
+        return None
+    # Basic sanity: four dot-separated octets
+    parts = a.split(".")
+    if len(parts) != 4:
+        return None
+    try:
+        if all(0 <= int(p) <= 255 for p in parts):
+            return a
+    except ValueError:
+        pass
+    return None
+
+
+def _ip_from_qemu_agent(data: dict) -> str | None:
+    """
+    Parse the response of agent/network-get-interfaces.
+    Shape: {"result": [{"name": "eth0", "ip-addresses": [{"ip-address-type": "ipv4",
+                                                           "ip-address": "10.x.x.x"}]}]}
+    Returns the first routable IPv4 found, or None.
+    """
+    for iface in data.get("result", []):
+        for addr in iface.get("ip-addresses", []):
+            if addr.get("ip-address-type") == "ipv4":
+                ip = _first_valid_ipv4(addr.get("ip-address", ""))
+                if ip:
+                    return ip
+    return None
+
+
+def _ip_from_lxc_interfaces(data: list) -> str | None:
+    """
+    Parse the response of lxc/{vmid}/interfaces.
+    Shape: [{"name": "eth0", "inet": "10.x.x.x/24"}, ...]
+    Returns the first routable IPv4 found, or None.
+    """
+    for iface in data if isinstance(data, list) else []:
+        inet = iface.get("inet", "")
+        if inet:
+            ip = _first_valid_ipv4(inet.split("/")[0])
+            if ip:
+                return ip
+    return None
 
 
 def _parse_mac(net_str: str, vm_type: str) -> str | None:
@@ -218,11 +270,21 @@ async def query_proxmox(nodes: list[dict]) -> dict[str, ProxmoxInfo]:
                 vms = []
 
             for vm in vms:
-                vmid = vm["vmid"]
+                vmid   = vm["vmid"]
+                status = vm.get("status", "unknown")
                 try:
                     config = proxmox.nodes(node).qemu(vmid).config.get()
                 except Exception:
                     continue
+
+                # Best-effort IP via QEMU guest agent (fails silently if not installed)
+                vm_ip: str | None = None
+                if status == "running":
+                    try:
+                        agent_data = proxmox.nodes(node).qemu(vmid).agent("network-get-interfaces").get()
+                        vm_ip = _ip_from_qemu_agent(agent_data)
+                    except Exception:
+                        pass  # agent absent, not running, or permission denied
 
                 for key, val in config.items():
                     if not key.startswith("net"):
@@ -234,7 +296,8 @@ async def query_proxmox(nodes: list[dict]) -> dict[str, ProxmoxInfo]:
                             vm_id=vmid,
                             type="vm",
                             node=node,
-                            status=vm.get("status", "unknown"),
+                            status=status,
+                            ip=vm_ip,
                         )
 
             # --- LXC containers ---
@@ -245,11 +308,21 @@ async def query_proxmox(nodes: list[dict]) -> dict[str, ProxmoxInfo]:
                 lxcs = []
 
             for lxc in lxcs:
-                vmid = lxc["vmid"]
+                vmid   = lxc["vmid"]
+                status = lxc.get("status", "unknown")
                 try:
                     config = proxmox.nodes(node).lxc(vmid).config.get()
                 except Exception:
                     continue
+
+                # Best-effort IP via LXC network interfaces endpoint
+                lxc_ip: str | None = None
+                if status == "running":
+                    try:
+                        iface_data = proxmox.nodes(node).lxc(vmid).interfaces.get()
+                        lxc_ip = _ip_from_lxc_interfaces(iface_data)
+                    except Exception:
+                        pass  # container may not expose interfaces endpoint
 
                 for key, val in config.items():
                     if not key.startswith("net"):
@@ -261,7 +334,8 @@ async def query_proxmox(nodes: list[dict]) -> dict[str, ProxmoxInfo]:
                             vm_id=vmid,
                             type="lxc",
                             node=node,
-                            status=lxc.get("status", "unknown"),
+                            status=status,
+                            ip=lxc_ip,
                         )
 
         logger.info(

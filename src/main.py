@@ -115,9 +115,10 @@ async def _run_scan_once() -> int:
     )
 
     # ── 1. Merge OPNsense ARP table with Proxmox inventory ───────────────────
-    # OPNsense knows the real IP; Proxmox knows the type and name.
+    # OPNsense supplies the authoritative IP; Proxmox supplies type and name.
+    # If a Proxmox guest is in the ARP map, the OPNsense IP takes priority.
     opnsense_upserted = 0
-    for mac, ip in arp_map.items():
+    for mac, arp_ip in arp_map.items():
         proxmox_info = proxmox_map.get(mac)
         if proxmox_info:
             device_type = proxmox_info.type   # "vm" or "lxc"
@@ -125,17 +126,19 @@ async def _run_scan_once() -> int:
         else:
             device_type = "bare-metal"
             vendor      = "Unknown"
-        await upsert_device(mac=mac, ip=ip, vendor=vendor, device_type=device_type)
+        await upsert_device(mac=mac, ip=arp_ip, vendor=vendor, device_type=device_type)
         opnsense_upserted += 1
 
     # ── 2. Upsert Proxmox guests not yet seen in OPNsense ARP ─────────────────
-    # Covers offline VMs and guests on VLANs the OPNsense ARP cache has aged out.
+    # Covers offline VMs and ARP-aged-out guests.
+    # Use the Proxmox guest-agent / LXC interface IP as a fallback when available.
     proxmox_only = 0
     for mac, info in proxmox_map.items():
         if mac not in arp_map:
+            fallback_ip = info.ip or ""  # guest agent / LXC interfaces IP, if found
             await upsert_device(
                 mac=mac,
-                ip="",          # no IP known; preserved if a previous cycle set one
+                ip=fallback_ip,
                 vendor="Proxmox",
                 device_type=info.type,
             )
