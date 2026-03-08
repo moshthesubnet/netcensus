@@ -44,6 +44,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.database import get_all_devices, get_logs_for_ip, init_db, set_device_alias, upsert_device
+from src.identifiers import query_docker
 from src.scanner import ProxmoxConfig, arp_scan
 from src.syslog_server import start_syslog_server
 
@@ -67,7 +68,7 @@ def _detect_subnet() -> str:
 SUBNET = os.environ.get("SUBNET", _detect_subnet())
 SCAN_IFACE = os.environ.get("SCAN_IFACE") or None
 SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL_SECONDS", "300"))
-# Comma-separated Docker host URLs, e.g. "tcp://10.30.30.13:2375,tcp://10.30.30.14:2375"
+# Comma-separated Docker host URLs, e.g. "tcp://10.30.40.2:2375,tcp://10.30.40.4:2375,tcp://10.30.40.6:2375"
 # Leave unset to use the local unix socket only.
 DOCKER_HOSTS: list[str] = [
     h.strip() for h in os.environ.get("DOCKER_HOSTS", "").split(",") if h.strip()
@@ -95,23 +96,44 @@ def _build_proxmox_config() -> ProxmoxConfig | None:
 # ---------------------------------------------------------------------------
 
 async def _run_scan_once() -> int:
-    """Run one full ARP + enrichment cycle and persist results. Returns device count."""
+    """
+    Run one full discovery cycle and persist results. Returns total device count.
+
+    Two independent discovery paths run concurrently:
+      1. ARP scan  — finds devices on SUBNET, enriched with Proxmox MAC matching.
+      2. Docker    — queries DOCKER_HOSTS directly via TCP; upserts containers even
+                     when they live on a different VLAN and are invisible to ARP.
+    """
     proxmox_cfg = _build_proxmox_config()
-    devices = await arp_scan(
-        SUBNET,
-        interface=SCAN_IFACE,
-        timeout=2,
-        proxmox=proxmox_cfg,
-        docker_hosts=DOCKER_HOSTS or None,
-    )
+
+    # Run ARP+Proxmox and Docker discovery concurrently
+    arp_task    = arp_scan(SUBNET, interface=SCAN_IFACE, timeout=2, proxmox=proxmox_cfg, docker_hosts=None)
+    docker_task = query_docker(DOCKER_HOSTS or None)
+    devices, docker_map = await asyncio.gather(arp_task, docker_task)
+
+    # ── 1. Persist ARP-discovered devices (already Proxmox-enriched) ──────────
     for d in devices:
+        await upsert_device(mac=d.mac, ip=d.ip, vendor=d.vendor, device_type=d.type)
+
+    # ── 2. Persist Docker containers directly (cross-VLAN safe) ───────────────
+    docker_upserted = 0
+    for ip, info in docker_map.items():
+        if not info.mac:
+            logger.debug("Docker container %s (%s) has no MAC — skipping upsert", info.name, ip)
+            continue
         await upsert_device(
-            mac=d.mac,
-            ip=d.ip,
-            vendor=d.vendor,
-            device_type=d.type,
+            mac=info.mac,
+            ip=ip,
+            vendor="Docker",
+            device_type="docker-container",
         )
-    return len(devices)
+        docker_upserted += 1
+
+    logger.info(
+        "Scan complete: %d ARP device(s) | %d Docker container(s) upserted",
+        len(devices), docker_upserted,
+    )
+    return len(devices) + docker_upserted
 
 
 async def _scan_loop() -> None:
@@ -123,8 +145,7 @@ async def _scan_loop() -> None:
     )
     while True:
         try:
-            count = await _run_scan_once()
-            logger.info("Scan complete: %d device(s) upserted", count)
+            await _run_scan_once()
         except PermissionError:
             logger.error(
                 "ARP scan requires raw-socket privileges. "

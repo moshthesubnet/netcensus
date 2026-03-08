@@ -55,6 +55,7 @@ class DockerInfo:
     image: str
     status: str
     networks: list[str]
+    mac: str = ""          # MAC address of the container's network interface
 
 
 async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
@@ -63,7 +64,7 @@ async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
 
     Args:
         hosts: List of Docker base URLs to query, e.g.
-               ['tcp://10.30.30.13:2375', 'unix:///var/run/docker.sock'].
+               ['tcp://10.30.40.2:2375', 'tcp://10.30.40.4:2375', 'tcp://10.30.40.6:2375'].
                If None or empty, falls back to the local socket
                at unix:///var/run/docker.sock.
 
@@ -105,6 +106,7 @@ async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
                         image=image,
                         status=container.status,
                         networks=net_names,
+                        mac=net_cfg.get("MacAddress", ""),
                     )
         finally:
             client.close()
