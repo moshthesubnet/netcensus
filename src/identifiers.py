@@ -147,30 +147,24 @@ def _parse_mac(net_str: str, vm_type: str) -> str | None:
     return m.group(1).lower() if m else None
 
 
-async def query_proxmox(
-    hosts: list[str],
-    user: str,
-    *,
-    password: str | None = None,
-    token_id: str | None = None,
-    token_secret: str | None = None,
-    verify_ssl: bool = False,
-) -> dict[str, ProxmoxInfo]:
+async def query_proxmox(nodes: list[dict]) -> dict[str, ProxmoxInfo]:
     """
     Poll one or more Proxmox hosts for all QEMU VMs and LXC containers.
 
-    All hosts are queried concurrently. Results are merged into one dict
-    keyed by MAC address (lowercase). Later hosts win on MAC collision.
+    Each node is queried concurrently using its own credentials. Results are
+    merged into one dict keyed by MAC address (lowercase); later nodes win
+    on collision.
 
     Args:
-        hosts:        List of Proxmox hostnames/IPs to query.
-        user:         API user, e.g. 'root@pam' or 'monitor@pve'.
-        password:     Password auth (mutually exclusive with token_*).
-        token_id:     Full API token id, e.g. 'root@pam!mytoken'.
-        token_secret: API token UUID secret.
-        verify_ssl:   Verify TLS certificate (default False for self-signed).
+        nodes: List of per-host config dicts. Supported keys:
+               host         (str, required)  — Proxmox IP or hostname
+               user         (str, required)  — API user, e.g. 'root@pam'
+               token_id     (str)            — full token id 'user@pam!name'
+               token_secret (str)            — token UUID secret
+               password     (str)            — password (alt to token auth)
+               verify_ssl   (bool, default False)
     """
-    if not hosts:
+    if not nodes:
         return {}
 
     try:
@@ -179,8 +173,15 @@ async def query_proxmox(
         logger.warning("proxmoxer not installed — skipping Proxmox discovery")
         return {}
 
-    def _fetch_one(host: str) -> dict[str, ProxmoxInfo]:
-        """Query a single Proxmox host and return its MAC → ProxmoxInfo map."""
+    def _fetch_one(node_cfg: dict) -> dict[str, ProxmoxInfo]:
+        """Query a single Proxmox host using its own credentials."""
+        host         = node_cfg["host"]
+        user         = node_cfg["user"]
+        token_id     = node_cfg.get("token_id")
+        token_secret = node_cfg.get("token_secret")
+        password     = node_cfg.get("password")
+        verify_ssl   = bool(node_cfg.get("verify_ssl", False))
+
         try:
             if token_id and token_secret:
                 proxmox = ProxmoxAPI(
@@ -201,12 +202,12 @@ async def query_proxmox(
         result: dict[str, ProxmoxInfo] = {}
 
         try:
-            nodes = proxmox.nodes.get()
+            pve_nodes = proxmox.nodes.get()
         except Exception as exc:
             logger.warning("Proxmox nodes.get() failed (%s): %s", host, exc)
             return {}
 
-        for node_info in nodes:
+        for node_info in pve_nodes:
             node = node_info["node"]
 
             # --- QEMU VMs ---
@@ -263,25 +264,27 @@ async def query_proxmox(
                             status=lxc.get("status", "unknown"),
                         )
 
-        logger.info("Proxmox %s: found %d MAC(s) across %d node(s)", host, len(result), len(nodes))
+        logger.info(
+            "Proxmox %s: found %d MAC(s) across %d node(s)",
+            host, len(result), len(pve_nodes),
+        )
         return result
 
     loop = asyncio.get_event_loop()
-    # Fan out across all hosts concurrently
     partials = await asyncio.gather(
-        *[loop.run_in_executor(None, _fetch_one, host) for host in hosts],
+        *[loop.run_in_executor(None, _fetch_one, n) for n in nodes],
         return_exceptions=True,
     )
 
     merged: dict[str, ProxmoxInfo] = {}
-    for host, partial in zip(hosts, partials):
+    for node_cfg, partial in zip(nodes, partials):
         if isinstance(partial, Exception):
-            logger.warning("Proxmox query error for %s: %s", host, partial)
+            logger.warning("Proxmox query error for %s: %s", node_cfg.get("host"), partial)
         else:
             merged.update(partial)  # type: ignore[arg-type]
 
     logger.info(
         "Proxmox total: %d unique MAC(s) across %d host(s)",
-        len(merged), len(hosts),
+        len(merged), len(nodes),
     )
     return merged

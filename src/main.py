@@ -23,16 +23,13 @@ SCAN_INTERVAL_SECONDS  Seconds between scans   (default: 300)
 DB_PATH                SQLite file path        (default: network_monitor.db)
 SYSLOG_HOST            Syslog bind address     (default: 0.0.0.0)
 SYSLOG_PORT            Syslog UDP port         (default: 514)
-PROXMOX_HOSTS          Comma-separated Proxmox IPs  (optional, e.g. 10.0.99.10,10.0.99.11)
-PROXMOX_HOST           Single Proxmox IP (fallback if PROXMOX_HOSTS not set)
-PROXMOX_USER           Proxmox API user             (default: root@pam)
-PROXMOX_PASSWORD       Password auth                (optional)
-PROXMOX_TOKEN_ID       Full token id                (optional, e.g. user@pam!token)
-PROXMOX_TOKEN_SECRET   Token UUID secret            (optional)
-PROXMOX_VERIFY_SSL     Verify TLS cert              (default: false)
+PROXMOX_NODES          JSON array of per-host dicts (host, user, token_id, token_secret)
+                       e.g. [{"host":"10.0.99.10","user":"root@pam","token_id":"root@pam!tok","token_secret":"uuid"},
+                              {"host":"10.0.99.11","user":"root@pam","token_id":"root@pam!tok","token_secret":"uuid2"}]
 """
 
 import asyncio
+import json
 import logging
 import os
 import socket
@@ -74,14 +71,29 @@ SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL_SECONDS", "300"))
 DOCKER_HOSTS: list[str] = [
     h.strip() for h in os.environ.get("DOCKER_HOSTS", "").split(",") if h.strip()
 ]
-# PROXMOX_HOSTS takes a comma-separated list; falls back to singular PROXMOX_HOST
-_proxmox_hosts_raw = os.environ.get("PROXMOX_HOSTS") or os.environ.get("PROXMOX_HOST") or ""
-PROXMOX_HOSTS: list[str] = [h.strip() for h in _proxmox_hosts_raw.split(",") if h.strip()]
-PROXMOX_USER         = os.environ.get("PROXMOX_USER", "root@pam")
-PROXMOX_PASSWORD     = os.environ.get("PROXMOX_PASSWORD") or None
-PROXMOX_TOKEN_ID     = os.environ.get("PROXMOX_TOKEN_ID") or None
-PROXMOX_TOKEN_SECRET = os.environ.get("PROXMOX_TOKEN_SECRET") or None
-PROXMOX_VERIFY_SSL   = os.environ.get("PROXMOX_VERIFY_SSL", "").lower() in ("1", "true")
+def _parse_proxmox_nodes() -> list[dict]:
+    """
+    Parse PROXMOX_NODES from the environment.
+    Expected value: a JSON array of dicts with keys:
+      host, user, token_id, token_secret  (and optionally: password, verify_ssl)
+    Returns an empty list and logs a warning on parse failure.
+    """
+    raw = os.environ.get("PROXMOX_NODES", "").strip()
+    if not raw:
+        return []
+    try:
+        nodes = json.loads(raw)
+        if not isinstance(nodes, list):
+            raise ValueError("PROXMOX_NODES must be a JSON array")
+        for n in nodes:
+            if "host" not in n or "user" not in n:
+                raise ValueError(f"Each node must have 'host' and 'user' keys; got: {n}")
+        return nodes
+    except Exception as exc:
+        logger.error("Failed to parse PROXMOX_NODES — Proxmox discovery disabled: %s", exc)
+        return []
+
+PROXMOX_NODES: list[dict] = _parse_proxmox_nodes()
 SYSLOG_HOST = os.environ.get("SYSLOG_HOST", "0.0.0.0")
 SYSLOG_PORT = int(os.environ.get("SYSLOG_PORT", "514"))
 
@@ -109,14 +121,7 @@ async def _run_scan_once() -> int:
         SUBNET, interface=SCAN_IFACE, timeout=2,
         proxmox=None, docker_hosts=None,   # enrichment handled here, not inside arp_scan
     )
-    proxmox_task = query_proxmox(
-        PROXMOX_HOSTS,
-        PROXMOX_USER,
-        password=PROXMOX_PASSWORD,
-        token_id=PROXMOX_TOKEN_ID,
-        token_secret=PROXMOX_TOKEN_SECRET,
-        verify_ssl=PROXMOX_VERIFY_SSL,
-    )
+    proxmox_task = query_proxmox(PROXMOX_NODES)
     docker_task = query_docker(DOCKER_HOSTS or None)
 
     devices, proxmox_map, docker_map = await asyncio.gather(
@@ -169,8 +174,8 @@ async def _run_scan_once() -> int:
 
 async def _scan_loop() -> None:
     """Repeatedly scan the network, sleeping SCAN_INTERVAL seconds between runs."""
-    docker_display  = ", ".join(DOCKER_HOSTS)  if DOCKER_HOSTS  else "unix socket (local)"
-    proxmox_display = ", ".join(PROXMOX_HOSTS) if PROXMOX_HOSTS else "not configured"
+    docker_display  = ", ".join(DOCKER_HOSTS) if DOCKER_HOSTS else "unix socket (local)"
+    proxmox_display = ", ".join(n["host"] for n in PROXMOX_NODES) if PROXMOX_NODES else "not configured"
     logger.info(
         "Background scanner starting — subnet=%s  interval=%ds  iface=%s",
         SUBNET, SCAN_INTERVAL, SCAN_IFACE or "default",
