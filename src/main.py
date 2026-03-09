@@ -46,6 +46,9 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
+load_dotenv()  # loads .env from the working directory before any os.environ.get() calls
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -56,9 +59,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.database import (
-    get_all_devices, get_logs_for_ip, init_db, purge_old_syslogs,
-    search_syslogs, set_custom_type, set_device_alias, set_device_notes,
-    set_hostname_if_unset, update_disappearance_counts, upsert_device,
+    get_all_devices, get_logs_for_ip, init_db, merge_host_containers,
+    purge_old_syslogs, search_syslogs, set_custom_type, set_device_alias,
+    set_device_notes, set_device_syslog_ip, set_hostname_if_unset,
+    update_disappearance_counts, upsert_device,
 )
 from src.identifiers import query_docker, query_proxmox
 from src.nmap_scanner import query_nmap
@@ -288,6 +292,10 @@ async def _run_scan_once() -> int:
     # ── 3. Upsert Docker containers (cross-VLAN, independent of ARP) ──────────
     _ip_to_mac = {ip: mac for mac, ip in arp_map.items()}
 
+    # Accumulate host-network containers per host MAC; merged after the main loop
+    # so the host device retains its own device_type/vendor.
+    _host_net_containers: dict[str, list[dict]] = {}
+
     docker_upserted = 0
     for key, info in docker_map.items():
         docker_meta = {
@@ -297,18 +305,18 @@ async def _run_scan_once() -> int:
             "status":         info.status,
             "networks":       info.networks,
             "network_mode":   info.network_mode,
+            "docker_host":    info.docker_host,
         }
 
         if info.network_mode == "host":
             host_mac = _ip_to_mac.get(info.host_ip)
             if host_mac:
-                await upsert_device(
-                    mac=host_mac, ip=info.host_ip, vendor="Docker",
-                    device_type="docker-container", metadata=docker_meta,
-                )
-                await set_hostname_if_unset(host_mac, info.name)
-                seen_macs.add(host_mac)
-                docker_upserted += 1
+                _host_net_containers.setdefault(host_mac, []).append({
+                    "container_name": info.name,
+                    "container_id":   info.container_id,
+                    "image":          info.image,
+                    "status":         info.status,
+                })
             else:
                 logger.debug(
                     "Docker host-net container %s: host %s not in ARP — skipping",
@@ -326,6 +334,12 @@ async def _run_scan_once() -> int:
         await set_hostname_if_unset(info.mac, info.name)
         seen_macs.add(info.mac)
         docker_upserted += 1
+
+    # ── 3b. Merge host-network containers into host device metadata ───────────
+    for host_mac, containers in _host_net_containers.items():
+        await merge_host_containers(host_mac, containers)
+        seen_macs.add(host_mac)
+        docker_upserted += len(containers)
 
     # ── 4. Increment disappearance count for devices absent this cycle ─────────
     await update_disappearance_counts(seen_macs)
@@ -455,6 +469,10 @@ class NotesRequest(BaseModel):
     notes: str | None = None
 
 
+class SyslogIpRequest(BaseModel):
+    syslog_ip: str | None = None
+
+
 class DeviceResponse(BaseModel):
     mac: str
     ip: str | None
@@ -464,6 +482,7 @@ class DeviceResponse(BaseModel):
     effective_type: str | None = None
     alias: str | None
     notes: str | None = None
+    syslog_ip: str | None = None
     first_seen: str | None
     last_seen: str
     metadata: dict | None = None
@@ -565,6 +584,23 @@ async def update_notes(mac: str, body: NotesRequest) -> JSONResponse:
     if not updated:
         raise HTTPException(status_code=404, detail=f"Device {mac} not found")
     return JSONResponse({"mac": mac, "notes": body.notes})
+
+
+@app.put(
+    "/api/devices/{mac}/syslog-ip",
+    summary="Set a secondary IP for syslog lookup",
+)
+async def update_syslog_ip(mac: str, body: SyslogIpRequest) -> JSONResponse:
+    """
+    Override the IP used when fetching syslog entries for this device.
+    Useful when a device sends syslog from a different interface than its primary IP
+    (e.g. OPNsense sends from its LAN IP but is stored under its management IP).
+    Pass null or empty string to clear.
+    """
+    updated = await set_device_syslog_ip(mac, body.syslog_ip)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Device {mac} not found")
+    return JSONResponse({"mac": mac, "syslog_ip": body.syslog_ip})
 
 
 @app.get("/api/devices/export", summary="Export device inventory as CSV or JSON")

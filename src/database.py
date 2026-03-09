@@ -108,6 +108,7 @@ async def _migrate_add_columns(db: aiosqlite.Connection) -> None:
         "disappearance_count": "ALTER TABLE devices ADD COLUMN disappearance_count INTEGER NOT NULL DEFAULT 0",
         "notes":               "ALTER TABLE devices ADD COLUMN notes TEXT",
         "scan_count":          "ALTER TABLE devices ADD COLUMN scan_count INTEGER NOT NULL DEFAULT 0",
+        "syslog_ip":           "ALTER TABLE devices ADD COLUMN syslog_ip TEXT",
     }
     for col, ddl in additions.items():
         if col not in cols:
@@ -216,6 +217,22 @@ async def update_disappearance_counts(seen_macs: set[str]) -> None:
         await db.commit()
 
 
+async def set_device_syslog_ip(mac: str, syslog_ip: str | None) -> bool:
+    """
+    Set or clear a secondary IP used for syslog lookup.
+    Useful when a device sends syslog from a different interface than its primary IP
+    (e.g. OPNsense sends from its LAN IP but is stored under its management IP).
+    Returns False if the MAC doesn't exist.
+    """
+    value = syslog_ip.strip() if syslog_ip and syslog_ip.strip() else None
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE devices SET syslog_ip = ? WHERE mac = ?", (value, mac)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def set_device_notes(mac: str, notes: str | None) -> bool:
     """
     Set or clear the free-text notes for a device.
@@ -241,6 +258,26 @@ async def set_device_alias(mac: str, alias: str) -> bool:
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def merge_host_containers(mac: str, containers: list[dict]) -> None:
+    """
+    Merge host-network container list into a device's metadata without changing
+    device_type or vendor.  Called once per scan for each host that runs one or
+    more --network=host containers.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT metadata FROM devices WHERE mac = ?", (mac,)) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return
+        existing = json.loads(row[0]) if row[0] else {}
+        existing["host_network_containers"] = containers
+        await db.execute(
+            "UPDATE devices SET metadata = ? WHERE mac = ?",
+            (json.dumps(existing), mac),
+        )
+        await db.commit()
 
 
 async def get_all_devices(

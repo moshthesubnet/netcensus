@@ -58,6 +58,7 @@ class DockerInfo:
     mac: str = ""           # MAC address of the container's network interface
     network_mode: str = "bridge"  # "host" for --network host containers
     host_ip: str = ""       # Docker daemon host IP; set only for host-net containers
+    docker_host: str = ""   # IP of the Docker host this container was discovered on
 
 
 async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
@@ -117,6 +118,7 @@ async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
                             networks=["host"],
                             network_mode="host",
                             host_ip=host_ip,
+                            docker_host=host_ip,
                         )
                     continue
 
@@ -131,6 +133,7 @@ async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
                         status=container.status,
                         networks=net_names,
                         mac=net_cfg.get("MacAddress", ""),
+                        docker_host=host_ip or "localhost",
                     )
         finally:
             client.close()

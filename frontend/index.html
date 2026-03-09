@@ -168,8 +168,13 @@
         <option value="lxc">LXC</option>
         <option value="docker-container">Docker Container</option>
         <option value="firewall">Firewall</option>
-        <option value="iot">IoT</option>
         <option value="hypervisor">Hypervisor</option>
+        <option value="switch">Switch</option>
+        <option value="ap">AP</option>
+        <option value="pc">PC</option>
+        <option value="smartphone">SmartPhone</option>
+        <option value="printer">Printer</option>
+        <option value="iot">IoT</option>
       </select>
       <button id="bulk-retype"
         class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
@@ -267,7 +272,15 @@
       <span id="dm-id" class="font-mono text-gray-400"></span>
       <span class="text-gray-500">Networks</span>
       <span id="dm-networks" class="text-gray-300"></span>
+      <span class="text-gray-500">Host</span>
+      <span id="dm-host" class="text-gray-300"></span>
     </div>
+  </div>
+
+  <!-- Host-network containers panel -->
+  <div id="host-containers-meta" class="hidden px-6 py-3 border-b border-gray-800 flex-shrink-0 space-y-2">
+    <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Host-Network Containers</p>
+    <div id="host-containers-list" class="space-y-2"></div>
   </div>
 
   <!-- Proxmox metadata panel (shown only for vm/lxc devices) -->
@@ -315,8 +328,13 @@
         <option value="lxc">LXC</option>
         <option value="docker-container">Docker Container</option>
         <option value="firewall">Firewall</option>
-        <option value="iot">IoT</option>
         <option value="hypervisor">Hypervisor</option>
+        <option value="switch">Switch</option>
+        <option value="ap">AP</option>
+        <option value="pc">PC</option>
+        <option value="smartphone">SmartPhone</option>
+        <option value="printer">Printer</option>
+        <option value="iot">IoT</option>
       </select>
       <button id="type-save"
         class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500
@@ -342,6 +360,24 @@
       </button>
     </div>
     <p id="notes-msg" class="text-xs mt-1 h-4"></p>
+  </div>
+
+  <!-- Syslog IP override -->
+  <div class="px-6 py-3 border-b border-gray-800 flex-shrink-0">
+    <label class="text-xs text-gray-500 uppercase tracking-wider">Syslog Source IP</label>
+    <p class="text-xs text-gray-600 mt-0.5">Override if logs arrive from a different IP than the device's primary address.</p>
+    <div class="flex gap-2 mt-1.5">
+      <input id="syslogip-input" type="text" placeholder="e.g. 10.30.30.1"
+        class="flex-1 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-sm
+               text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-2
+               focus:ring-indigo-500 focus:border-transparent" />
+      <button id="syslogip-save"
+        class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500
+               text-white transition-colors whitespace-nowrap">
+        Save
+      </button>
+    </div>
+    <p id="syslogip-msg" class="text-xs mt-1 h-4"></p>
   </div>
 
   <!-- Log viewer -->
@@ -418,6 +454,11 @@ const TYPE_BADGE = {
   'bare-metal':       { cls: 'bg-gray-700 text-gray-300 border border-gray-600',          label: 'Bare-metal',  counter: 'bm'     },
   'firewall':         { cls: 'bg-red-950 text-red-300 border border-red-800',             label: 'Firewall',    counter: 'bm'     },
   'iot':              { cls: 'bg-emerald-950 text-emerald-300 border border-emerald-800',  label: 'IoT',         counter: 'bm'     },
+  'switch':           { cls: 'bg-sky-950 text-sky-300 border border-sky-800',             label: 'Switch',      counter: 'bm'     },
+  'ap':               { cls: 'bg-teal-950 text-teal-300 border border-teal-800',          label: 'AP',          counter: 'bm'     },
+  'pc':               { cls: 'bg-indigo-950 text-indigo-300 border border-indigo-800',    label: 'PC',          counter: 'bm'     },
+  'smartphone':       { cls: 'bg-pink-950 text-pink-300 border border-pink-800',          label: 'Smartphone',  counter: 'bm'     },
+  'printer':          { cls: 'bg-orange-950 text-orange-300 border border-orange-800',    label: 'Printer',     counter: 'bm'     },
   'docker-container': { cls: 'bg-cyan-950 text-cyan-300 border border-cyan-800',          label: 'Docker',      counter: 'docker' },
   'container':        { cls: 'bg-cyan-950 text-cyan-300 border border-cyan-800',          label: 'Container',   counter: 'docker' },
   'vm':               { cls: 'bg-amber-950 text-amber-300 border border-amber-800',       label: 'VM',          counter: 'vm'     },
@@ -668,6 +709,8 @@ function openPanel(device) {
   document.getElementById('alias-msg').textContent = '';
   document.getElementById('notes-input').value  = device.notes || '';
   document.getElementById('notes-msg').textContent = '';
+  document.getElementById('syslogip-input').value  = device.syslog_ip || '';
+  document.getElementById('syslogip-msg').textContent = '';
 
   // Scan count
   const sc = device.scan_count ?? 0;
@@ -717,9 +760,36 @@ function openPanel(device) {
     document.getElementById('dm-image').textContent    = m.image    ?? '—';
     document.getElementById('dm-id').textContent       = m.container_id ?? '—';
     document.getElementById('dm-networks').textContent = (m.networks ?? []).join(', ') || '—';
+    const hostIp = m.docker_host ?? '';
+    const hostDev = hostIp ? allDevices.find(d => d.ip === hostIp) : null;
+    const hostLabel = hostDev
+      ? (hostDev.alias ? `${hostDev.alias} (${hostIp})` : hostIp)
+      : (hostIp || '—');
+    document.getElementById('dm-host').textContent = hostLabel;
     dockerMeta.classList.remove('hidden');
   } else {
     dockerMeta.classList.add('hidden');
+  }
+
+  // Host-network containers section
+  const hostContainersMeta = document.getElementById('host-containers-meta');
+  const hostContainersList = document.getElementById('host-containers-list');
+  const hostContainers = device.metadata?.host_network_containers;
+  if (hostContainers && hostContainers.length > 0) {
+    hostContainersList.innerHTML = hostContainers.map(c => {
+      const s = c.status ?? 'unknown';
+      const sCls = s === 'running' ? 'text-emerald-400' : s === 'paused' ? 'text-yellow-400' : 'text-gray-500';
+      return `<div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs bg-gray-800/50 rounded-lg p-2">
+        <span class="text-gray-500">Name</span><span class="font-mono text-cyan-300">${esc(c.container_name ?? '—')}</span>
+        <span class="text-gray-500">Image</span><span class="font-mono text-gray-300 break-all">${esc(c.image ?? '—')}</span>
+        <span class="text-gray-500">Status</span><span class="${sCls} font-medium">${esc(s)}</span>
+        <span class="text-gray-500">ID</span><span class="font-mono text-gray-500">${esc((c.container_id ?? '').slice(0, 12))}</span>
+      </div>`;
+    }).join('');
+    hostContainersMeta.classList.remove('hidden');
+  } else {
+    hostContainersList.innerHTML = '';
+    hostContainersMeta.classList.add('hidden');
   }
 
   // Proxmox metadata section
@@ -753,8 +823,9 @@ function openPanel(device) {
   });
 
   // Load logs (skip if IP unknown — no syslog can be attributed without one)
-  if (device.ip) {
-    fetchLogs(device.ip);
+  const logIp = device.syslog_ip || device.ip;
+  if (logIp) {
+    fetchLogs(logIp);
   } else {
     document.getElementById('log-loading').classList.add('hidden');
     document.getElementById('log-empty').classList.remove('hidden');
@@ -927,6 +998,38 @@ async function saveNotes() {
   }
 }
 
+// ── Syslog IP saving ──────────────────────────────────────────────────────
+
+async function saveSyslogIp() {
+  if (!activeDevice) return;
+  const input  = document.getElementById('syslogip-input');
+  const msgEl  = document.getElementById('syslogip-msg');
+  const syslogIp = input.value.trim() || null;
+
+  try {
+    const res = await fetch(`/api/devices/${encodeURIComponent(activeDevice.mac)}/syslog-ip`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ syslog_ip: syslogIp }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const dev = allDevices.find(d => d.mac === activeDevice.mac);
+    if (dev) dev.syslog_ip = syslogIp;
+    activeDevice.syslog_ip = syslogIp;
+
+    msgEl.textContent = 'Saved.';
+    msgEl.className   = 'text-xs mt-1 h-4 text-emerald-400';
+    setTimeout(() => { msgEl.textContent = ''; }, 2500);
+
+    // Reload logs using the new syslog IP
+    fetchLogs(syslogIp || activeDevice.ip);
+  } catch (err) {
+    msgEl.textContent = `Error: ${err.message}`;
+    msgEl.className   = 'text-xs mt-1 h-4 text-red-400';
+  }
+}
+
 // ── Bulk operations ────────────────────────────────────────────────────────
 
 function syncSelectAll(filtered) {
@@ -1030,6 +1133,10 @@ document.getElementById('alias-input').addEventListener('keydown', e => {
 });
 document.getElementById('type-save').addEventListener('click', saveType);
 document.getElementById('notes-save').addEventListener('click', saveNotes);
+document.getElementById('syslogip-save').addEventListener('click', saveSyslogIp);
+document.getElementById('syslogip-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') saveSyslogIp();
+});
 
 // Select-all checkbox
 document.getElementById('select-all').addEventListener('change', e => {
@@ -1057,13 +1164,13 @@ document.getElementById('log-search').addEventListener('input', e => {
   const q = e.target.value.trim();
   if (!q) {
     // Revert to showing current device's logs
-    if (activeDevice?.ip) fetchLogs(activeDevice.ip);
+    if (activeDevice) fetchLogs(activeDevice.syslog_ip || activeDevice.ip);
     return;
   }
   logSearchTimer = setTimeout(() => searchLogs(q), 350);
 });
 document.getElementById('log-refresh').addEventListener('click', () => {
-  if (activeDevice) fetchLogs(activeDevice.ip);
+  if (activeDevice) fetchLogs(activeDevice.syslog_ip || activeDevice.ip);
 });
 document.getElementById('search').addEventListener('input', () => renderTable(allDevices));
 
@@ -1105,7 +1212,7 @@ function startAutoRefresh() {
     fetchDevices();
     fetchHealth();
     // Silently refresh open panel logs too
-    if (activeDevice?.ip) fetchLogs(activeDevice.ip);
+    if (activeDevice) fetchLogs(activeDevice.syslog_ip || activeDevice.ip);
   }, REFRESH_INTERVAL_MS);
 }
 
