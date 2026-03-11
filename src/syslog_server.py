@@ -146,14 +146,31 @@ def _parse_filterlog(raw_csv: str) -> str:
 # Top-level parser
 # ---------------------------------------------------------------------------
 
+_IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+def _resolve_source(hostname: str, fallback: str) -> str:
+    """
+    Use `hostname` as the source IP when it looks like a valid IPv4 address.
+    Falls back to `fallback` (the UDP sender address) otherwise.
+    When messages are relayed through rsyslog the UDP sender is 127.0.0.1;
+    the real originating device IP lives in the HOSTNAME field of the message.
+    """
+    if hostname and hostname != "-" and _IPV4_RE.match(hostname):
+        return hostname
+    return fallback
+
+
 def parse_syslog(raw: bytes, addr: tuple[str, int]) -> dict[str, str]:
     """
     Parse a raw UDP syslog datagram into a normalised dict:
       source_ip, severity, message, timestamp
 
     Falls back to storing the raw text on parse failure so no message is lost.
+    When the packet arrives via a local rsyslog relay (addr == 127.0.0.1) the
+    HOSTNAME field inside the message is used as source_ip instead.
     """
-    source_ip = addr[0]
+    relay_ip = addr[0]
     text = raw.decode("utf-8", errors="replace").strip()
 
     # --- RFC 5424 (has integer version field immediately after PRI) ---
@@ -161,6 +178,7 @@ def parse_syslog(raw: bytes, addr: tuple[str, int]) -> dict[str, str]:
     if m:
         severity, _ = _decode_priority(m.group(1))
         timestamp    = _parse_iso_ts(m.group(3)) if m.group(3) != "-" else _now_utc()
+        source_ip    = _resolve_source(m.group(4), relay_ip)
         app          = m.group(5) if m.group(5) != "-" else ""
         body         = (m.group(9) or "").strip()
         message      = f"{app}: {body}" if app and body else (app or body or text)
@@ -172,6 +190,7 @@ def parse_syslog(raw: bytes, addr: tuple[str, int]) -> dict[str, str]:
     if m:
         severity, _ = _decode_priority(m.group(1))
         timestamp    = _parse_rfc3164_ts(m.group(2))
+        source_ip    = _resolve_source(m.group(3), relay_ip)
         body         = (m.group(4) or "").strip()
 
         # OPNsense filterlog — convert CSV to readable summary
@@ -183,7 +202,7 @@ def parse_syslog(raw: bytes, addr: tuple[str, int]) -> dict[str, str]:
                 "message": body or text, "timestamp": timestamp}
 
     # --- Bare message (no PRI header) ---
-    return {"source_ip": source_ip, "severity": "info",
+    return {"source_ip": relay_ip, "severity": "info",
             "message": text, "timestamp": _now_utc()}
 
 
