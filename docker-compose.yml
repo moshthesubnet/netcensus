@@ -1,0 +1,17 @@
+services:
+  network-monitor:
+    build: .
+    # host networking lets the container bind UDP 514 and receive syslog
+    # directly on the host's IP without extra port-mapping complexity.
+    network_mode: host
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    volumes:
+      # Persist the SQLite database across container restarts
+      - ./data:/app/data
+
+    environment:
+      DB_PATH: /app/data/network_monitor.db

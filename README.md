@@ -20,44 +20,46 @@ These are queried concurrently each scan cycle and merged into a SQLite-backed d
 
 ## Requirements
 
-- Python 3.11+
 - OPNsense with API access enabled (core requirement)
+- Docker (recommended) **or** Python 3.11+ for bare-metal installs
 - Proxmox API token (optional)
-- Docker Engine TCP sockets exposed (optional)
-- `nmap` on the host (optional, for supplemental subnet sweeps)
-- Root / `NET_ADMIN` capability only if binding to port 514
+- Docker Engine TCP sockets exposed on monitored hosts (optional)
 
 ---
 
-## Setup
+## Running with Docker (recommended)
 
 ```bash
 git clone https://github.com/your-username/network-monitor.git
 cd network-monitor
 
+cp .env.example .env
+# Edit .env with your OPNsense/Proxmox/Docker credentials
+
+docker compose up -d
+```
+
+The container runs with `network_mode: host` so it binds UDP 514 directly on the host's IP without extra port-mapping. The SQLite database is persisted in `./data/`.
+
+Dashboard: `http://<host-ip>:8000`
+API docs: `http://<host-ip>:8000/docs`
+Syslog: UDP `<host-ip>:514`
+
+---
+
+## Running without Docker
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Edit .env with your OPNsense/Proxmox/Docker credentials
-```
+# Edit .env with your credentials
 
----
-
-## Running
-
-```bash
-# Requires root only if using port 514 for syslog
-sudo python3 -m uvicorn src.main:app --host 0.0.0.0 --port 8000
-
-# Or use the start script:
+# Root is required only to bind UDP port 514
 sudo ./start.sh
 ```
-
-Dashboard: `http://<host-ip>:8000`
-API docs: `http://<host-ip>:8000/docs`
-Syslog: UDP `<host-ip>:514`
 
 ---
 

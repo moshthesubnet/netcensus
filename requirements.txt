@@ -5,3 +5,4 @@ mac-vendor-lookup
 proxmoxer
 requests
 httpx
+python-dotenv

@@ -12,3 +12,6 @@ CLAUDE.md
 
 # Temporary scratch scripts
 _*_tmp.py
+
+# Docker volume — persisted database
+data/
