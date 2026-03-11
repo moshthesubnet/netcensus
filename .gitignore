@@ -5,6 +5,10 @@ __pycache__/
 *.db
 *.sqlite3
 .venv/
+venv/
 dist/
 build/
 CLAUDE.md
+
+# Temporary scratch scripts
+_*_tmp.py
