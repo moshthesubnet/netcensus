@@ -325,10 +325,10 @@ async def _run_scan_once() -> int:
             continue
 
         if not info.mac:
-            logger.debug("Docker container %s (%s) has no MAC — skipping", info.name, key)
+            logger.debug("Docker container %s has no MAC — skipping", info.name)
             continue
         await upsert_device(
-            mac=info.mac, ip=key, vendor="Docker",
+            mac=info.mac, ip=info.ip, vendor="Docker",
             device_type="docker-container", metadata=docker_meta,
         )
         await set_hostname_if_unset(info.mac, info.name)

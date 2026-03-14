@@ -1,0 +1,9 @@
+.env
+data/
+*.db
+venv/
+__pycache__/
+*.pyc
+*.pyo
+_*_tmp.py
+scan.py

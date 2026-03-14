@@ -569,11 +569,11 @@ function renderTable(devices) {
 
   const filtered = search
     ? devices.filter(d =>
-        (d.ip       ?? '').toLowerCase().includes(search) ||
-        (d.mac      ?? '').toLowerCase().includes(search) ||
-        (d.vendor   ?? '').toLowerCase().includes(search) ||
-        (d.alias    ?? '').toLowerCase().includes(search) ||
-        (d.name     ?? '').toLowerCase().includes(search))
+        (d.ip                               ?? '').toLowerCase().includes(search) ||
+        (d.mac                              ?? '').toLowerCase().includes(search) ||
+        (d.vendor                           ?? '').toLowerCase().includes(search) ||
+        (d.alias                            ?? '').toLowerCase().includes(search) ||
+        (d.effective_type ?? d.device_type  ?? '').toLowerCase().includes(search))
     : devices;
 
   loading.classList.add('hidden');

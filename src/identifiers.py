@@ -56,6 +56,7 @@ class DockerInfo:
     status: str
     networks: list[str]
     mac: str = ""           # MAC address of the container's network interface
+    ip: str = ""            # Container IP address
     network_mode: str = "bridge"  # "host" for --network host containers
     host_ip: str = ""       # Docker daemon host IP; set only for host-net containers
     docker_host: str = ""   # IP of the Docker host this container was discovered on
@@ -122,19 +123,25 @@ async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
                         )
                     continue
 
+                # Key by MAC (not IP) so containers from different hosts that
+                # share the same internal subnet don't overwrite each other.
+                # Only store the first network interface with a valid IP.
                 for _net_name, net_cfg in networks.items():
                     ip = net_cfg.get("IPAddress", "")
-                    if not ip:
+                    mac = net_cfg.get("MacAddress", "")
+                    if not ip or not mac:
                         continue
-                    result[ip] = DockerInfo(
+                    result[mac] = DockerInfo(
                         name=container.name,
                         container_id=container.short_id,
                         image=image,
                         status=container.status,
                         networks=net_names,
-                        mac=net_cfg.get("MacAddress", ""),
+                        mac=mac,
+                        ip=ip,
                         docker_host=host_ip or "localhost",
                     )
+                    break
         finally:
             client.close()
 

@@ -305,9 +305,10 @@ async def get_all_devices(
     if search:
         term = f"%{search}%"
         conditions.append(
-            "(ip LIKE ? OR mac LIKE ? OR alias LIKE ? OR vendor LIKE ? OR ipv6 LIKE ?)"
+            "(ip LIKE ? OR mac LIKE ? OR alias LIKE ? OR vendor LIKE ? OR ipv6 LIKE ?"
+            " OR COALESCE(custom_type, device_type) LIKE ?)"
         )
-        params.extend([term, term, term, term, term])
+        params.extend([term, term, term, term, term, term])
     if since:
         conditions.append("last_seen >= ?")
         params.append(since)

@@ -17,6 +17,6 @@ COPY frontend/ ./frontend/
 # 8000  — FastAPI / dashboard
 # 514   — syslog UDP (requires host networking or NET_BIND_SERVICE cap)
 EXPOSE 8000
-EXPOSE 514/udp
+EXPOSE 5140/udp
 
 CMD ["python3", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
