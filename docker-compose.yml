@@ -6,9 +6,11 @@ services:
     network_mode: host
     restart: unless-stopped
 
+    # NET_BIND_SERVICE: required to bind UDP port 514 (syslog) as non-root.
+    # NET_RAW: only needed if NMAP_SUBNETS is configured for supplemental scanning.
     cap_add:
+      - NET_BIND_SERVICE
       - NET_RAW
-      - NET_ADMIN
 
     env_file:
       - .env

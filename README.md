@@ -30,8 +30,8 @@ These are queried concurrently each scan cycle and merged into a SQLite-backed d
 ## Running with Docker (recommended)
 
 ```bash
-git clone https://github.com/your-username/network-monitor.git
-cd network-monitor
+git clone https://github.com/moshthesubnet/network-monitoring-app.git
+cd network-monitoring-app
 
 cp .env.example .env
 # Edit .env with your OPNsense/Proxmox/Docker credentials

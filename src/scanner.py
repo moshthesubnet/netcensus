@@ -76,7 +76,7 @@ async def arp_scan(
     if interface:
         kwargs["iface"] = interface
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     answered, _ = await loop.run_in_executor(None, lambda: srp(packet, **kwargs))
     print(f"[ARP scan] complete — {len(answered)} reply/replies received", flush=True)
 
@@ -87,26 +87,24 @@ async def arp_scan(
         return raw_devices
 
     # Fan out: OUI lookup + Docker + Proxmox all run concurrently
-    async def _no_proxmox() -> dict:
-        return {}
-
-    proxmox_coro = (
-        query_proxmox(
-            proxmox.host,
-            proxmox.user,
-            password=proxmox.password,
-            token_id=proxmox.token_id,
-            token_secret=proxmox.token_secret,
-            verify_ssl=proxmox.verify_ssl,
-        )
-        if proxmox
-        else _no_proxmox()
-    )
+    proxmox_nodes: list[dict] = []
+    if proxmox:
+        node_cfg: dict = {
+            "host": proxmox.host,
+            "user": proxmox.user,
+            "verify_ssl": proxmox.verify_ssl,
+        }
+        if proxmox.token_id and proxmox.token_secret:
+            node_cfg["token_id"] = proxmox.token_id
+            node_cfg["token_secret"] = proxmox.token_secret
+        elif proxmox.password:
+            node_cfg["password"] = proxmox.password
+        proxmox_nodes.append(node_cfg)
 
     vendors, docker_map, proxmox_map = await asyncio.gather(
         asyncio.gather(*[lookup_vendor(d.mac) for d in raw_devices]),
         query_docker(docker_hosts),
-        proxmox_coro,
+        query_proxmox(proxmox_nodes),
     )
 
     return enrich_devices(raw_devices, vendors, docker_map, proxmox_map)

@@ -148,7 +148,7 @@ async def query_docker(hosts: list[str] | None = None) -> dict[str, DockerInfo]:
         logger.info("Docker %s: found %d container IP(s)", base_url, len(result))
         return result
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     merged: dict[str, DockerInfo] = {}
     for base_url in targets:
         try:
@@ -378,7 +378,7 @@ async def query_proxmox(nodes: list[dict]) -> dict[str, ProxmoxInfo]:
         )
         return result
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     partials = await asyncio.gather(
         *[loop.run_in_executor(None, _fetch_one, n) for n in nodes],
         return_exceptions=True,

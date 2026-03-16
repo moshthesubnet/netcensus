@@ -263,7 +263,7 @@ async def start_syslog_server(
     Note: binding port 514 requires root or CAP_NET_BIND_SERVICE.
     For testing without root, set SYSLOG_PORT=5140 (or any port > 1023).
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     transport, _ = await loop.create_datagram_endpoint(
         SyslogProtocol,
         local_addr=(host, port),
