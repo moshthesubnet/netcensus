@@ -9,6 +9,7 @@ venv/
 dist/
 build/
 CLAUDE.md
+.claude/
 
 # Temporary scratch scripts
 _*_tmp.py
