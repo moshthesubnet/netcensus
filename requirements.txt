@@ -8,3 +8,5 @@ httpx
 python-dotenv
 docker              # Docker Engine API (optional — only needed if DOCKER_HOSTS is set)
 scapy               # ARP scanning (optional — only needed for scan.py CLI tool)
+pytest>=8.0
+pytest-asyncio>=0.23
