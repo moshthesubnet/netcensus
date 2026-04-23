@@ -1,0 +1,23 @@
+# Demo instance — seeded with a coherent homelab narrative.
+# No network scanning, no syslog binding, no OPNsense/Proxmox/Docker API calls.
+# Third parties can run this with zero config:
+#   docker compose -f docker-compose.demo.yml up
+# Then open http://localhost:8080
+
+services:
+  netcensus-demo:
+    build: .
+    container_name: netcensus-demo
+    restart: unless-stopped
+
+    # Publish to 8080 so it can run alongside a real instance on 8000.
+    ports:
+      - "8080:8000"
+
+    # Keep DB inside the container — it's a seed, not persistent state.
+    environment:
+      DEMO_MODE: "true"
+      DB_PATH: "/tmp/netcensus-demo.db"
+
+    # Demo has no state worth persisting.
+    # No volumes, no cap_add, no host networking.
