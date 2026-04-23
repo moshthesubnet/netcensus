@@ -32,9 +32,9 @@ Query all three concurrently each cycle, merge into one SQLite-backed device reg
 
 ## Dashboard
 
-![netcensus dashboard](docs/images/dashboard.png)
+<!-- Screenshot coming — run `docker compose -f docker-compose.demo.yml up`, open http://localhost:8080, take a full-page PNG at 1440×900, and save to `docs/images/dashboard.png`. -->
 
-*The demo seed above: 6 VLANs, 47 devices, one intentional `device_gone` alert on VLAN 99.*
+*Demo seed: 6 VLANs, 47 devices, one intentional `device_gone` alert on VLAN 99.*
 
 ## Feature highlights
 
