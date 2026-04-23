@@ -115,6 +115,52 @@
 <!-- ═══════════════════════════════════════════ MAIN ══ -->
 <main class="max-w-screen-2xl mx-auto px-6 py-6">
 
+  <!-- Overview strip -->
+  <section id="overview" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+    <div class="bg-surface-card border border-surface-border rounded-lg px-4 py-3">
+      <div class="text-[10px] text-ink-faint uppercase tracking-[0.12em] font-semibold">Devices</div>
+      <div class="mono text-2xl text-ink-primary mt-1" id="ov-total">–</div>
+      <div class="text-[11px] text-accent mt-0.5" id="ov-new">&nbsp;</div>
+    </div>
+    <div class="bg-surface-card border border-surface-border rounded-lg px-4 py-3">
+      <div class="text-[10px] text-ink-faint uppercase tracking-[0.12em] font-semibold">VLANs</div>
+      <div class="mono text-2xl text-ink-primary mt-1" id="ov-vlans">–</div>
+      <div class="text-[11px] text-ink-faint mt-0.5" id="ov-vlans-note">&nbsp;</div>
+    </div>
+    <div class="bg-surface-card border border-surface-border rounded-lg px-4 py-3">
+      <div class="text-[10px] text-ink-faint uppercase tracking-[0.12em] font-semibold">Composition</div>
+      <div class="mono text-xs mt-1.5 flex gap-3 flex-wrap">
+        <span class="text-ink-body">BM <span class="text-ink-primary font-medium" id="ov-bm">–</span></span>
+        <span class="text-accent">D <span class="font-medium" id="ov-docker">–</span></span>
+        <span class="text-ink-body">V <span class="text-ink-primary font-medium" id="ov-vm">–</span></span>
+        <span class="text-ink-muted">L <span class="font-medium" id="ov-lxc">–</span></span>
+      </div>
+      <div class="mt-2 flex h-[3px] rounded-sm overflow-hidden" id="ov-bar">
+        <div class="bg-ink-quiet" id="ov-bar-bm"></div>
+        <div class="bg-accent" id="ov-bar-docker"></div>
+        <div class="bg-ink-body" id="ov-bar-vm"></div>
+        <div class="bg-ink-muted" id="ov-bar-lxc"></div>
+      </div>
+    </div>
+    <div class="bg-surface-card border border-surface-border rounded-lg px-4 py-3">
+      <div class="text-[10px] text-ink-faint uppercase tracking-[0.12em] font-semibold">Alerts</div>
+      <div class="mono text-2xl text-alert mt-1" id="ov-alerts">–</div>
+      <div class="text-[11px] text-alert mt-0.5" id="ov-alerts-note">&nbsp;</div>
+    </div>
+  </section>
+
+  <!-- Source-health row -->
+  <section id="source-row" class="mono text-[11px] text-ink-quiet flex flex-wrap gap-x-4 gap-y-1 mb-5">
+    <span>sources</span>
+    <span data-source="opnsense_arp"><span class="text-ink-quiet">○</span> opnsense-arp</span>
+    <span data-source="opnsense_dhcp"><span class="text-ink-quiet">○</span> dhcp</span>
+    <span data-source="opnsense_ndp"><span class="text-ink-quiet">○</span> ndp</span>
+    <span data-source="proxmox"><span class="text-ink-quiet">○</span> proxmox</span>
+    <span data-source="docker"><span class="text-ink-quiet">○</span> docker</span>
+    <span data-source="nmap"><span class="text-ink-quiet">○</span> nmap</span>
+    <span data-source="snmp"><span class="text-ink-quiet">○</span> snmp</span>
+  </section>
+
   <!-- Search + filter bar -->
   <div class="flex items-center gap-3 mb-4 flex-wrap">
     <div class="relative flex-1 min-w-[200px] max-w-sm">
@@ -545,11 +591,34 @@ function updateStats(devices) {
     const entry = TYPE_BADGE[normalizeType(eff)] ?? TYPE_BADGE['bare-metal'];
     counts[entry.counter] = (counts[entry.counter] ?? 0) + 1;
   }
-  document.getElementById('count-total').textContent  = devices.length;
-  document.getElementById('count-bm').textContent     = counts.bm;
-  document.getElementById('count-docker').textContent = counts.docker;
-  document.getElementById('count-vm').textContent     = counts.vm;
-  document.getElementById('count-lxc').textContent    = counts.lxc;
+  const total  = devices.length;
+  const bm     = counts.bm;
+  const docker = counts.docker;
+  const vm     = counts.vm;
+  const lxc    = counts.lxc;
+
+  // Legacy chip IDs (kept in case anything still references them)
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+  // Overview strip
+  setText('ov-total', total);
+  setText('ov-bm', bm);
+  setText('ov-docker', docker);
+  setText('ov-vm', vm);
+  setText('ov-lxc', lxc);
+
+  // Composition bar flex ratios
+  const bar = (id, n) => { const el = document.getElementById(id); if (el) el.style.flex = String(n || 0); };
+  bar('ov-bar-bm', bm); bar('ov-bar-docker', docker);
+  bar('ov-bar-vm', vm); bar('ov-bar-lxc', lxc);
+
+  // Derived: VLAN count and alerts (compute from the same payload)
+  const vlans = new Set((devices || []).map(d => d.vlan).filter(Boolean));
+  setText('ov-vlans', vlans.size || '–');
+  setText('ov-vlans-note', vlans.size ? 'all reachable' : '');
+  const alerts = (devices || []).filter(d => d.disappearance_count >= 3).length;
+  setText('ov-alerts', alerts || '–');
+  setText('ov-alerts-note', alerts ? 'device_gone' : '');
 }
 
 function renderTable(devices) {
@@ -1172,27 +1241,37 @@ document.addEventListener('keydown', e => {
 
 // ── Source health ─────────────────────────────────────────────────────────
 
-const SOURCE_STATUS_DOT = {
-  ok:      'bg-emerald-500',
-  stale:   'bg-yellow-500',
-  degraded: 'bg-yellow-500',
-  unknown: 'bg-gray-600',
-};
+function paintSource(key, healthy) {
+  const el = document.querySelector(`#source-row span[data-source="${key}"]`);
+  if (!el) return;
+  const dot = el.firstElementChild;
+  if (healthy === null || healthy === undefined) {
+    dot.textContent = '○';
+    dot.className = 'text-ink-quiet';
+  } else if (healthy) {
+    dot.textContent = '●';
+    dot.className = 'text-accent';
+  } else {
+    dot.textContent = '●';
+    dot.className = 'text-alert';
+  }
+}
 
 async function fetchHealth() {
   try {
     const res = await fetch('/api/health');
     if (!res.ok) return;
     const data = await res.json();
-    for (const chip of document.querySelectorAll('.source-chip')) {
-      const src = chip.dataset.source;
-      const info = data.sources?.[src];
-      if (!info) continue;
-      const dot = chip.querySelector('.dot');
-      dot.className = `dot w-2 h-2 ${SOURCE_STATUS_DOT[info.status] ?? 'bg-gray-600'}`;
-      const count = info.last_count ?? 0;
-      const label = info.last_ok ? `${count} items · ${relativeTime(info.last_ok)}` : 'no data yet';
-      chip.title = `${src}: ${info.status} — ${label}`;
+    for (const [src, info] of Object.entries(data.sources ?? {})) {
+      const healthy = info.status === 'ok' ? true : info.status === 'unknown' ? null : false;
+      paintSource(src, healthy);
+      // Update title on the span for extra context
+      const el = document.querySelector(`#source-row span[data-source="${src}"]`);
+      if (el) {
+        const count = info.last_count ?? 0;
+        const label = info.last_ok ? `${count} items · ${relativeTime(info.last_ok)}` : 'no data yet';
+        el.title = `${src}: ${info.status} — ${label}`;
+      }
     }
   } catch { /* health endpoint optional */ }
 }
