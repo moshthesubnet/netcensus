@@ -10,36 +10,77 @@
       darkMode: 'class',
       theme: {
         extend: {
-          fontFamily: { mono: ['JetBrains Mono', 'Fira Code', 'monospace'] },
+          fontFamily: {
+            mono: ['Fira Code', 'Courier New', 'monospace'],
+            sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+            serif: ['Georgia', 'Times New Roman', 'serif'],
+          },
+          colors: {
+            surface: {
+              DEFAULT: '#111111',
+              card: '#1a1a1a',
+              alt: '#1c1c1c',
+              border: '#262626',
+            },
+            ink: {
+              primary: '#fafafa',
+              body: '#b0b0b0',
+              muted: '#a3a3a3',
+              faint: '#737373',
+              quiet: '#525252',
+            },
+            accent: {
+              DEFAULT: '#5eead4',
+              pressed: '#4cc9b0',
+            },
+            alert: '#f87171',
+          },
           transitionProperty: { panel: 'transform, opacity' },
         },
       },
     };
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     html { color-scheme: dark; }
-    body { font-family: 'JetBrains Mono', monospace; }
+    body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    .wordmark { font-family: Georgia, 'Times New Roman', serif; font-weight: 400; letter-spacing: -0.01em; }
+    .mono { font-family: 'Fira Code', 'Courier New', monospace; }
+
+    /* Respect reduced-motion preference (spec §1 slop-guardrails). */
+    @media (prefers-reduced-motion: reduce) {
+      #panel, #overlay, * { transition: none !important; animation: none !important; }
+    }
+
     .panel-enter  { transform: translateX(100%); }
     .panel-open   { transform: translateX(0); }
     #panel        { transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
     #overlay      { transition: opacity 0.28s ease; }
     tr.device-row { cursor: pointer; }
-    tr.device-row:hover td { background-color: rgba(99,102,241,0.08); }
-    .badge        { display: inline-flex; align-items: center; padding: 2px 8px;
-                    border-radius: 9999px; font-size: 0.7rem; font-weight: 600;
-                    letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; }
+    tr.device-row:hover td { background-color: rgba(94,234,212,0.06); }
+    .badge              { display: inline-flex; align-items: center; padding: 2px 8px;
+                          border-radius: 9999px; font-size: 0.68rem; font-weight: 600;
+                          letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap;
+                          border: 1px solid #262626; background: #1a1a1a; color: #b0b0b0; }
+    .badge-docker       { color: #5eead4; border-color: rgba(94,234,212,0.3); }
+    .badge-vm           { color: #fafafa; }
+    .badge-lxc          { color: #a3a3a3; }
+    .badge-bare-metal,
+    .badge-firewall,
+    .badge-hypervisor   { color: #fafafa; }
+    .badge-alert        { color: #f87171; border-color: rgba(248,113,113,0.3); }
     .dot          { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
     ::-webkit-scrollbar       { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: #262626; border-radius: 3px; }
     .log-row      { border-left: 3px solid transparent; }
     @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
     .live-dot     { animation: pulse-dot 2s ease-in-out infinite; }
   </style>
 </head>
-<body class="dark bg-gray-950 text-gray-100 min-h-screen antialiased">
+<body class="dark bg-surface text-ink-primary min-h-screen antialiased">
 
 <!-- ═══════════════════════════════════════════ HEADER ══ -->
 <header class="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-30">
