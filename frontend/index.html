@@ -71,6 +71,12 @@
     .badge-firewall,
     .badge-hypervisor   { color: #fafafa; }
     .badge-alert        { color: #f87171; border-color: rgba(248,113,113,0.3); }
+    .badge-iot          { color: #a3a3a3; }
+    .badge-switch       { color: #fafafa; }
+    .badge-ap           { color: #5eead4; border-color: rgba(94,234,212,0.2); }
+    .badge-pc           { color: #fafafa; }
+    .badge-smartphone   { color: #a3a3a3; }
+    .badge-printer      { color: #a3a3a3; }
     .dot          { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
     ::-webkit-scrollbar       { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -491,12 +497,12 @@ const REFRESH_INTERVAL_MS = 30_000;
 const TYPE_BADGE = {
   'bare-metal':       { cls: 'badge-bare-metal',  label: 'BM',         counter: 'bm'     },
   'firewall':         { cls: 'badge-firewall',     label: 'FW',         counter: 'bm'     },
-  'iot':              { cls: '',                   label: 'IoT',        counter: 'bm'     },
-  'switch':           { cls: '',                   label: 'SW',         counter: 'bm'     },
-  'ap':               { cls: '',                   label: 'AP',         counter: 'bm'     },
-  'pc':               { cls: '',                   label: 'PC',         counter: 'bm'     },
-  'smartphone':       { cls: '',                   label: 'Phone',      counter: 'bm'     },
-  'printer':          { cls: '',                   label: 'Print',      counter: 'bm'     },
+  'iot':              { cls: 'badge-iot',          label: 'IoT',        counter: 'bm'     },
+  'switch':           { cls: 'badge-switch',       label: 'SW',         counter: 'bm'     },
+  'ap':               { cls: 'badge-ap',           label: 'AP',         counter: 'bm'     },
+  'pc':               { cls: 'badge-pc',           label: 'PC',         counter: 'bm'     },
+  'smartphone':       { cls: 'badge-smartphone',   label: 'Phone',      counter: 'bm'     },
+  'printer':          { cls: 'badge-printer',      label: 'Print',      counter: 'bm'     },
   'docker-container': { cls: 'badge-docker',       label: 'D',          counter: 'docker' },
   'container':        { cls: 'badge-docker',       label: 'D',          counter: 'docker' },
   'vm':               { cls: 'badge-vm',           label: 'VM',         counter: 'vm'     },
