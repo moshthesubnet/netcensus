@@ -230,8 +230,8 @@
   </div>
 
   <!-- Device table -->
-  <div class="rounded-xl border border-gray-800 overflow-hidden bg-gray-900">
-    <div id="table-loading" class="flex items-center justify-center py-16 text-gray-600 gap-2">
+  <div class="rounded-lg border border-surface-border overflow-hidden bg-surface-card">
+    <div id="table-loading" class="flex items-center justify-center py-16 text-ink-faint gap-2">
       <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
@@ -239,11 +239,11 @@
       <span class="text-sm">Scanning network…</span>
     </div>
 
-    <table id="device-table" class="w-full text-sm hidden">
+    <table id="device-table" class="w-full text-sm hidden mono">
       <thead>
-        <tr class="border-b border-gray-800 text-xs text-gray-500 uppercase tracking-wider">
+        <tr class="border-b border-surface-border text-[10px] text-ink-faint uppercase tracking-[0.1em]">
           <th class="px-3 py-3 text-left w-8">
-            <input id="select-all" type="checkbox" class="rounded border-gray-600 bg-gray-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer" />
+            <input id="select-all" type="checkbox" class="rounded border-surface-border bg-surface-card text-accent focus:ring-accent focus:ring-offset-0 cursor-pointer" />
           </th>
           <th class="px-3 py-3 text-left w-6"></th>
           <th class="px-4 py-3 text-left">IP Address</th>
@@ -259,11 +259,11 @@
     </table>
 
     <div id="table-empty" class="hidden flex-col items-center justify-center py-16 text-center gap-2">
-      <svg class="w-10 h-10 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+      <svg class="w-10 h-10 text-ink-quiet" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
       </svg>
-      <p class="text-gray-500 text-sm">No devices found.</p>
-      <p class="text-gray-600 text-xs">Check that the scanner is running with sufficient privileges.</p>
+      <p class="text-ink-body text-sm">No devices found.</p>
+      <p class="text-ink-faint text-xs">Check that the scanner is running with sufficient privileges.</p>
     </div>
   </div>
 </main>
@@ -487,21 +487,21 @@
 const REFRESH_INTERVAL_MS = 30_000;
 
 // All Tailwind classes must be spelled out in full so the CDN scanner keeps them.
-// Each entry carries a `counter` key that maps to the header stat chip it feeds.
+// Each entry carries a `counter` key that maps to the overview strip card it feeds.
 const TYPE_BADGE = {
-  'bare-metal':       { cls: 'bg-gray-700 text-gray-300 border border-gray-600',          label: 'Bare-metal',  counter: 'bm'     },
-  'firewall':         { cls: 'bg-red-950 text-red-300 border border-red-800',             label: 'Firewall',    counter: 'bm'     },
-  'iot':              { cls: 'bg-emerald-950 text-emerald-300 border border-emerald-800',  label: 'IoT',         counter: 'bm'     },
-  'switch':           { cls: 'bg-sky-950 text-sky-300 border border-sky-800',             label: 'Switch',      counter: 'bm'     },
-  'ap':               { cls: 'bg-teal-950 text-teal-300 border border-teal-800',          label: 'AP',          counter: 'bm'     },
-  'pc':               { cls: 'bg-indigo-950 text-indigo-300 border border-indigo-800',    label: 'PC',          counter: 'bm'     },
-  'smartphone':       { cls: 'bg-pink-950 text-pink-300 border border-pink-800',          label: 'Smartphone',  counter: 'bm'     },
-  'printer':          { cls: 'bg-orange-950 text-orange-300 border border-orange-800',    label: 'Printer',     counter: 'bm'     },
-  'docker-container': { cls: 'bg-cyan-950 text-cyan-300 border border-cyan-800',          label: 'Docker',      counter: 'docker' },
-  'container':        { cls: 'bg-cyan-950 text-cyan-300 border border-cyan-800',          label: 'Container',   counter: 'docker' },
-  'vm':               { cls: 'bg-amber-950 text-amber-300 border border-amber-800',       label: 'VM',          counter: 'vm'     },
-  'hypervisor':       { cls: 'bg-amber-950 text-amber-300 border border-amber-800',       label: 'Hypervisor',  counter: 'vm'     },
-  'lxc':              { cls: 'bg-purple-950 text-purple-300 border border-purple-800',    label: 'LXC',         counter: 'lxc'   },
+  'bare-metal':       { cls: 'badge-bare-metal',  label: 'BM',         counter: 'bm'     },
+  'firewall':         { cls: 'badge-firewall',     label: 'FW',         counter: 'bm'     },
+  'iot':              { cls: '',                   label: 'IoT',        counter: 'bm'     },
+  'switch':           { cls: '',                   label: 'SW',         counter: 'bm'     },
+  'ap':               { cls: '',                   label: 'AP',         counter: 'bm'     },
+  'pc':               { cls: '',                   label: 'PC',         counter: 'bm'     },
+  'smartphone':       { cls: '',                   label: 'Phone',      counter: 'bm'     },
+  'printer':          { cls: '',                   label: 'Print',      counter: 'bm'     },
+  'docker-container': { cls: 'badge-docker',       label: 'D',          counter: 'docker' },
+  'container':        { cls: 'badge-docker',       label: 'D',          counter: 'docker' },
+  'vm':               { cls: 'badge-vm',           label: 'VM',         counter: 'vm'     },
+  'hypervisor':       { cls: 'badge-hypervisor',   label: 'HV',         counter: 'vm'     },
+  'lxc':              { cls: 'badge-lxc',          label: 'LXC',        counter: 'lxc'   },
 };
 
 // Normalise the raw device_type string from the API into a TYPE_BADGE key.
@@ -688,7 +688,7 @@ function deviceStatus(d) {
   // Proxmox VM / LXC — use Proxmox-reported status
   if ((t === 'vm' || t === 'lxc') && d.metadata?.status) {
     const s = d.metadata.status;
-    if (s === 'running') return { cls: 'bg-emerald-500 live-dot', label: 'Running' };
+    if (s === 'running') return { cls: 'bg-accent live-dot', label: 'Running' };
     if (s === 'paused')  return { cls: 'bg-yellow-500',           label: 'Paused'  };
     return { cls: 'bg-red-600', label: s };   // stopped / unknown
   }
@@ -696,7 +696,7 @@ function deviceStatus(d) {
   // Docker container — use container status
   if (t === 'docker-container' && d.metadata?.status) {
     const s = d.metadata.status;
-    if (s === 'running') return { cls: 'bg-emerald-500 live-dot', label: 'Running' };
+    if (s === 'running') return { cls: 'bg-accent live-dot', label: 'Running' };
     if (s === 'paused')  return { cls: 'bg-yellow-500',           label: 'Paused'  };
     return { cls: 'bg-red-600', label: s };
   }
@@ -704,8 +704,8 @@ function deviceStatus(d) {
   // Bare-metal / other — use disappearance count and recency
   const dc = d.disappearance_count ?? 0;
   if (dc > 0)            return { cls: 'bg-red-600',           label: `Offline (missed ${dc} scan${dc === 1 ? '' : 's'})` };
-  if (isRecent(d.last_seen)) return { cls: 'bg-emerald-500 live-dot', label: 'Active' };
-  return { cls: 'bg-gray-600', label: 'Idle' };
+  if (isRecent(d.last_seen)) return { cls: 'bg-accent live-dot', label: 'Active' };
+  return { cls: 'bg-ink-quiet', label: 'Idle' };
 }
 
 function deviceRow(d) {
@@ -719,29 +719,29 @@ function deviceRow(d) {
   const isDocker = normalizeType(eff) === 'docker-container';
   const image    = isDocker ? (d.metadata?.image ?? '') : '';
   const nameCel  = image
-    ? `<div>${esc(display)}</div><div class="text-gray-600 font-mono text-[10px] truncate max-w-[180px]" title="${esc(image)}">${esc(image)}</div>`
+    ? `<div>${esc(display)}</div><div class="text-ink-quiet mono text-[10px] truncate max-w-[180px]" title="${esc(image)}">${esc(image)}</div>`
     : esc(display);
 
   // For stopped VMs/LXCs dim the IP to reinforce offline state
   const t = normalizeType(eff);
   const isOffline = (t === 'vm' || t === 'lxc') && d.metadata?.status && d.metadata.status !== 'running';
-  const ipCls = isOffline ? 'text-gray-500 line-through' : 'text-indigo-300 font-medium';
+  const ipCls = isOffline ? 'text-ink-faint line-through' : 'text-ink-primary font-medium';
 
-  return `<tr class="device-row border-t border-gray-800/60" data-mac="${esc(d.mac)}">
+  return `<tr class="device-row border-t border-surface-border" data-mac="${esc(d.mac)}">
     <td class="px-3 py-3" onclick="event.stopPropagation()">
-      <input type="checkbox" class="row-check rounded border-gray-600 bg-gray-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
+      <input type="checkbox" class="row-check rounded border-surface-border bg-surface-card text-accent focus:ring-accent focus:ring-offset-0 cursor-pointer"
         data-mac="${esc(d.mac)}" ${checked} />
     </td>
     <td class="px-3 py-3">
       <span class="dot ${status.cls}" title="${esc(status.label)}"></span>
     </td>
-    <td class="px-4 py-3 font-mono text-sm ${ipCls}">${esc(d.ip ?? '—')}</td>
-    <td class="px-4 py-3 font-mono text-xs text-gray-400">${esc(d.mac)}</td>
-    <td class="px-4 py-3 text-gray-300 text-xs max-w-[180px] truncate" title="${esc(d.vendor)}">${esc(d.vendor)}</td>
+    <td class="px-4 py-3 mono text-sm ${ipCls}">${esc(d.ip ?? '—')}</td>
+    <td class="px-4 py-3 mono text-xs text-ink-muted">${esc(d.mac)}</td>
+    <td class="px-4 py-3 text-ink-body text-xs max-w-[180px] truncate" title="${esc(d.vendor)}">${esc(d.vendor)}</td>
     <td class="px-4 py-3"><span class="badge ${badge.cls}">${badge.label}</span></td>
-    <td class="px-4 py-3 text-gray-300 text-xs">${nameCel}</td>
-    <td class="px-4 py-3 text-xs text-gray-500" title="${esc(d.last_seen)}">${relativeTime(d.last_seen)}</td>
-    <td class="px-4 py-3 text-gray-600">
+    <td class="px-4 py-3 text-ink-body text-xs">${nameCel}</td>
+    <td class="px-4 py-3 text-xs text-ink-faint" title="${esc(d.last_seen)}">${relativeTime(d.last_seen)}</td>
+    <td class="px-4 py-3 text-ink-quiet">
       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/>
       </svg>
