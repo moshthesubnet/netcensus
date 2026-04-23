@@ -16,3 +16,5 @@ _*_tmp.py
 
 # Docker volume — persisted database
 data/
+# Visual brainstorming artifacts
+.superpowers/
