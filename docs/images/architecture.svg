@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" role="img" aria-label="netcensus architecture: data sources feed the scanner loop and syslog receiver, which write to SQLite and expose FastAPI endpoints for the dashboard and webhooks.">
+  <defs>
+    <style>
+      .bg      { fill: #111111; }
+      .card    { fill: #1a1a1a; stroke: #262626; stroke-width: 1; rx: 6; ry: 6; }
+      .app     { fill: #1c1c1c; stroke: #5eead4; stroke-width: 1; rx: 6; ry: 6; }
+      .label   { font: 600 12px 'Fira Code', 'Courier New', monospace; fill: #fafafa; }
+      .sub     { font: 400 10px system-ui, -apple-system, sans-serif; fill: #a3a3a3; }
+      .title   { font: 400 16px Georgia, serif; fill: #fafafa; }
+      .axis    { font: 600 9px system-ui, sans-serif; fill: #737373; letter-spacing: 0.12em; text-transform: uppercase; }
+      .arrow   { stroke: #5eead4; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .arrow-q { stroke: #525252; stroke-width: 1;   fill: none; marker-end: url(#arrow-q); stroke-dasharray: 3 3; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5eead4"/>
+    </marker>
+    <marker id="arrow-q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#525252"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="900" height="360"/>
+
+  <text x="30" y="34" class="title">netcensus architecture</text>
+  <text x="30" y="54" class="sub">Three authoritative sources · one merged view · no raw sockets</text>
+
+  <text x="60"  y="100" class="axis">Sources</text>
+  <text x="410" y="100" class="axis">Application</text>
+  <text x="740" y="100" class="axis">Surfaces</text>
+
+  <!-- Sources -->
+  <g>
+    <rect class="card" x="40" y="115" width="220" height="40"/>
+    <text x="56" y="140" class="label">OPNsense</text>
+    <text x="138" y="140" class="sub">ARP / NDP / DHCP</text>
+
+    <rect class="card" x="40" y="165" width="220" height="40"/>
+    <text x="56" y="190" class="label">Proxmox</text>
+    <text x="138" y="190" class="sub">VM / LXC inventory</text>
+
+    <rect class="card" x="40" y="215" width="220" height="40"/>
+    <text x="56" y="240" class="label">Docker</text>
+    <text x="138" y="240" class="sub">Engine API per host</text>
+
+    <rect class="card" x="40" y="265" width="220" height="40"/>
+    <text x="56" y="290" class="label">nmap · SNMP</text>
+    <text x="138" y="290" class="sub">optional supplemental</text>
+  </g>
+
+  <!-- App box -->
+  <g>
+    <rect class="app" x="320" y="115" width="260" height="190"/>
+    <text x="336" y="140" class="label">Scanner loop</text>
+    <text x="336" y="156" class="sub">async, concurrent, 300s cycle</text>
+
+    <line x1="336" y1="170" x2="564" y2="170" stroke="#262626" stroke-width="1"/>
+
+    <text x="336" y="192" class="label">Syslog receiver</text>
+    <text x="336" y="208" class="sub">UDP :514, filterlog parser</text>
+
+    <line x1="336" y1="222" x2="564" y2="222" stroke="#262626" stroke-width="1"/>
+
+    <text x="336" y="244" class="label">SQLite (aiosqlite)</text>
+    <text x="336" y="260" class="sub">devices + syslogs + alerts</text>
+
+    <line x1="336" y1="274" x2="564" y2="274" stroke="#262626" stroke-width="1"/>
+
+    <text x="336" y="294" class="label">FastAPI · asyncio lifespan</text>
+  </g>
+
+  <!-- Surfaces -->
+  <g>
+    <rect class="card" x="640" y="130" width="220" height="40"/>
+    <text x="656" y="155" class="label">Web dashboard</text>
+
+    <rect class="card" x="640" y="180" width="220" height="40"/>
+    <text x="656" y="205" class="label">REST API · /api/*</text>
+
+    <rect class="card" x="640" y="230" width="220" height="40"/>
+    <text x="656" y="255" class="label">Webhook alerts</text>
+  </g>
+
+  <!-- Arrows: sources → app -->
+  <path class="arrow" d="M 260 135 H 320"/>
+  <path class="arrow" d="M 260 185 H 320"/>
+  <path class="arrow" d="M 260 235 H 320"/>
+  <path class="arrow-q" d="M 260 285 H 320"/>
+
+  <!-- Arrows: app → surfaces -->
+  <path class="arrow" d="M 580 150 H 640"/>
+  <path class="arrow" d="M 580 200 H 640"/>
+  <path class="arrow" d="M 580 250 H 640"/>
+</svg>
