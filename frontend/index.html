@@ -273,25 +273,25 @@
 
 <!-- ═══════════════════════════════════════ SIDE PANEL ══ -->
 <aside id="panel"
-  class="fixed top-0 right-0 h-full z-50 w-full sm:w-[520px] bg-gray-900 border-l border-gray-800
+  class="fixed top-0 right-0 h-full z-50 w-full sm:w-[520px] bg-surface-card border-l border-surface-border
          shadow-2xl flex flex-col panel-enter overflow-hidden">
 
   <!-- Panel header -->
-  <div class="flex items-start justify-between gap-3 px-6 pt-6 pb-4 border-b border-gray-800 flex-shrink-0">
+  <div class="flex items-start justify-between gap-3 px-6 pt-6 pb-4 border-b border-surface-border flex-shrink-0">
     <div class="min-w-0">
       <div class="flex items-center gap-2 flex-wrap">
         <span id="panel-type-badge" class="badge"></span>
-        <h2 id="panel-name" class="text-base font-semibold text-gray-100 truncate"></h2>
+        <h2 id="panel-name" class="wordmark text-lg text-ink-primary truncate"></h2>
       </div>
-      <p id="panel-ip" class="text-sm text-gray-400 mt-1 font-mono"></p>
-      <p id="panel-ipv6" class="text-xs text-blue-400 font-mono mt-0.5 hidden"></p>
-      <p id="panel-mac" class="text-xs text-gray-600 font-mono mt-0.5"></p>
-      <p id="panel-vendor" class="text-xs text-gray-500 mt-0.5"></p>
-      <p id="panel-first-seen" class="text-xs text-gray-600 mt-0.5"></p>
-      <p id="panel-disappearance" class="text-xs text-amber-600 mt-0.5 hidden"></p>
+      <p id="panel-ip" class="text-sm text-ink-body mt-1 mono"></p>
+      <p id="panel-ipv6" class="text-xs text-accent mono mt-0.5 hidden"></p>
+      <p id="panel-mac" class="text-xs text-ink-faint mono mt-0.5"></p>
+      <p id="panel-vendor" class="text-xs text-ink-muted mt-0.5"></p>
+      <p id="panel-first-seen" class="text-xs text-ink-faint mt-0.5"></p>
+      <p id="panel-disappearance" class="text-xs text-alert mt-0.5 hidden"></p>
     </div>
     <button id="panel-close"
-      class="flex-shrink-0 p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors">
+      class="flex-shrink-0 p-1.5 rounded-md text-ink-faint hover:text-ink-primary hover:bg-surface transition-colors">
       <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
       </svg>
@@ -299,54 +299,54 @@
   </div>
 
   <!-- Docker metadata panel (shown only for docker-container devices) -->
-  <div id="docker-meta" class="hidden px-6 py-3 border-b border-gray-800 flex-shrink-0 space-y-2">
-    <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Container Details</p>
+  <div id="docker-meta" class="hidden px-6 py-3 border-b border-surface-border flex-shrink-0 space-y-2">
+    <p class="text-xs text-ink-faint uppercase tracking-wider mb-1">Container Details</p>
     <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
-      <span class="text-gray-500">Status</span>
+      <span class="text-ink-faint">Status</span>
       <span id="dm-status"></span>
-      <span class="text-gray-500">Image</span>
-      <span id="dm-image" class="font-mono text-cyan-300 break-all"></span>
-      <span class="text-gray-500">Container ID</span>
-      <span id="dm-id" class="font-mono text-gray-400"></span>
-      <span class="text-gray-500">Networks</span>
-      <span id="dm-networks" class="text-gray-300"></span>
-      <span class="text-gray-500">Host</span>
-      <span id="dm-host" class="text-gray-300"></span>
+      <span class="text-ink-faint">Image</span>
+      <span id="dm-image" class="mono text-accent break-all"></span>
+      <span class="text-ink-faint">Container ID</span>
+      <span id="dm-id" class="mono text-ink-muted"></span>
+      <span class="text-ink-faint">Networks</span>
+      <span id="dm-networks" class="text-ink-body"></span>
+      <span class="text-ink-faint">Host</span>
+      <span id="dm-host" class="text-ink-body"></span>
     </div>
   </div>
 
   <!-- Host-network containers panel -->
-  <div id="host-containers-meta" class="hidden px-6 py-3 border-b border-gray-800 flex-shrink-0 space-y-2">
-    <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Host-Network Containers</p>
+  <div id="host-containers-meta" class="hidden px-6 py-3 border-b border-surface-border flex-shrink-0 space-y-2">
+    <p class="text-xs text-ink-faint uppercase tracking-wider mb-1">Host-Network Containers</p>
     <div id="host-containers-list" class="space-y-2"></div>
   </div>
 
   <!-- Proxmox metadata panel (shown only for vm/lxc devices) -->
-  <div id="proxmox-meta" class="hidden px-6 py-3 border-b border-gray-800 flex-shrink-0 space-y-2">
-    <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Proxmox Details</p>
+  <div id="proxmox-meta" class="hidden px-6 py-3 border-b border-surface-border flex-shrink-0 space-y-2">
+    <p class="text-xs text-ink-faint uppercase tracking-wider mb-1">Proxmox Details</p>
     <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
-      <span class="text-gray-500">Node</span>
-      <span id="pm-node" class="font-mono text-gray-300"></span>
-      <span class="text-gray-500">VM ID</span>
-      <span id="pm-vmid" class="font-mono text-gray-400"></span>
-      <span class="text-gray-500">Status</span>
+      <span class="text-ink-faint">Node</span>
+      <span id="pm-node" class="mono text-ink-body"></span>
+      <span class="text-ink-faint">VM ID</span>
+      <span id="pm-vmid" class="mono text-ink-muted"></span>
+      <span class="text-ink-faint">Status</span>
       <span id="pm-status"></span>
-      <span class="text-gray-500">Type</span>
-      <span id="pm-type" class="text-gray-400 uppercase text-[10px] tracking-wider"></span>
+      <span class="text-ink-faint">Type</span>
+      <span id="pm-type" class="text-ink-muted uppercase text-[10px] tracking-wider"></span>
     </div>
   </div>
 
   <!-- Alias editor -->
-  <div class="px-6 py-3 border-b border-gray-800 flex-shrink-0">
-    <label class="text-xs text-gray-500 uppercase tracking-wider">Custom Alias</label>
+  <div class="px-6 py-3 border-b border-surface-border flex-shrink-0">
+    <label class="text-xs text-ink-faint uppercase tracking-wider">Custom Alias</label>
     <div class="flex gap-2 mt-1.5">
       <input id="alias-input" type="text" placeholder="e.g. Living Room TV"
-        class="flex-1 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-sm
-               text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-2
-               focus:ring-indigo-500 focus:border-transparent" />
+        class="flex-1 px-3 py-1.5 rounded-md bg-surface border border-surface-border text-sm
+               text-ink-primary placeholder-ink-quiet focus:outline-none focus:border-accent
+               focus:ring-1 focus:ring-accent transition-colors" />
       <button id="alias-save"
-        class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500
-               text-white transition-colors whitespace-nowrap">
+        class="px-3 py-1.5 rounded-md text-xs font-medium border border-accent text-accent
+               hover:bg-accent hover:text-surface transition-colors whitespace-nowrap">
         Save
       </button>
     </div>
@@ -354,12 +354,12 @@
   </div>
 
   <!-- Type override -->
-  <div class="px-6 py-3 border-b border-gray-800 flex-shrink-0">
-    <label class="text-xs text-gray-500 uppercase tracking-wider">Device Type</label>
+  <div class="px-6 py-3 border-b border-surface-border flex-shrink-0">
+    <label class="text-xs text-ink-faint uppercase tracking-wider">Device Type</label>
     <div class="flex gap-2 mt-1.5">
       <select id="type-select"
-        class="flex-1 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-sm
-               text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        class="flex-1 px-3 py-1.5 rounded-md bg-surface border border-surface-border text-sm
+               text-ink-primary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent">
         <option value="">Auto-detect</option>
         <option value="bare-metal">Bare-metal</option>
         <option value="vm">VM</option>
@@ -375,8 +375,8 @@
         <option value="iot">IoT</option>
       </select>
       <button id="type-save"
-        class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500
-               text-white transition-colors whitespace-nowrap">
+        class="px-3 py-1.5 rounded-md text-xs font-medium border border-surface-border text-ink-body
+               hover:border-ink-quiet transition-colors whitespace-nowrap">
         Save
       </button>
     </div>
@@ -384,16 +384,16 @@
   </div>
 
   <!-- Notes editor -->
-  <div class="px-6 py-3 border-b border-gray-800 flex-shrink-0">
-    <label class="text-xs text-gray-500 uppercase tracking-wider">Notes</label>
+  <div class="px-6 py-3 border-b border-surface-border flex-shrink-0">
+    <label class="text-xs text-ink-faint uppercase tracking-wider">Notes</label>
     <div class="flex gap-2 mt-1.5">
       <textarea id="notes-input" rows="2" placeholder="Operator notes…"
-        class="flex-1 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-sm
-               text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-2
-               focus:ring-indigo-500 resize-none"></textarea>
+        class="flex-1 px-3 py-1.5 rounded-md bg-surface border border-surface-border text-sm
+               text-ink-primary placeholder-ink-quiet focus:outline-none focus:border-accent
+               focus:ring-1 focus:ring-accent resize-none"></textarea>
       <button id="notes-save"
-        class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500
-               text-white transition-colors whitespace-nowrap self-start">
+        class="px-3 py-1.5 rounded-md text-xs font-medium border border-surface-border text-ink-body
+               hover:border-ink-quiet transition-colors whitespace-nowrap self-start">
         Save
       </button>
     </div>
@@ -401,17 +401,17 @@
   </div>
 
   <!-- Syslog IP override -->
-  <div class="px-6 py-3 border-b border-gray-800 flex-shrink-0">
-    <label class="text-xs text-gray-500 uppercase tracking-wider">Syslog Source IP</label>
-    <p class="text-xs text-gray-600 mt-0.5">Override if logs arrive from a different IP than the device's primary address.</p>
+  <div class="px-6 py-3 border-b border-surface-border flex-shrink-0">
+    <label class="text-xs text-ink-faint uppercase tracking-wider">Syslog Source IP</label>
+    <p class="text-xs text-ink-quiet mt-0.5">Override if logs arrive from a different IP than the device's primary address.</p>
     <div class="flex gap-2 mt-1.5">
       <input id="syslogip-input" type="text" placeholder="e.g. 10.30.30.1"
-        class="flex-1 px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-sm
-               text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-2
-               focus:ring-indigo-500 focus:border-transparent" />
+        class="flex-1 px-3 py-1.5 rounded-md bg-surface border border-surface-border text-sm
+               text-ink-primary placeholder-ink-quiet focus:outline-none focus:border-accent
+               focus:ring-1 focus:ring-accent transition-colors" />
       <button id="syslogip-save"
-        class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500
-               text-white transition-colors whitespace-nowrap">
+        class="px-3 py-1.5 rounded-md text-xs font-medium border border-surface-border text-ink-body
+               hover:border-ink-quiet transition-colors whitespace-nowrap">
         Save
       </button>
     </div>
@@ -420,12 +420,12 @@
 
   <!-- Log viewer -->
   <div class="flex flex-col flex-1 min-h-0">
-    <div class="flex items-center justify-between px-6 py-3 border-b border-gray-800 flex-shrink-0">
-      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Syslog History</h3>
+    <div class="flex items-center justify-between px-6 py-3 border-b border-surface-border flex-shrink-0">
+      <h3 class="text-xs font-semibold text-ink-muted uppercase tracking-wider">Syslog History</h3>
       <div class="flex items-center gap-2">
-        <span id="log-count" class="text-xs text-gray-600"></span>
+        <span id="log-count" class="text-xs text-ink-quiet"></span>
         <button id="log-refresh"
-          class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1">
+          class="text-xs text-ink-faint hover:text-ink-primary transition-colors flex items-center gap-1">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
           </svg>
@@ -433,29 +433,29 @@
         </button>
       </div>
     </div>
-    <div class="px-6 py-2 border-b border-gray-800 flex-shrink-0">
+    <div class="px-6 py-2 border-b border-surface-border flex-shrink-0">
       <div class="relative">
-        <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-faint" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803a7.5 7.5 0 0010.607 10.607z"/>
         </svg>
         <input id="log-search" type="text" placeholder="Search logs…"
-          class="w-full pl-8 pr-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700
-                 text-xs text-gray-200 placeholder-gray-500 focus:outline-none
-                 focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+          class="w-full pl-8 pr-3 py-1.5 rounded-md bg-surface border border-surface-border
+                 text-xs text-ink-primary placeholder-ink-quiet focus:outline-none
+                 focus:border-accent focus:ring-1 focus:ring-accent transition-colors mono" />
       </div>
     </div>
 
     <!-- Log list -->
     <div id="log-container" class="flex-1 overflow-y-auto px-4 py-3 space-y-1">
-      <div id="log-loading" class="flex items-center gap-2 py-8 justify-center text-gray-600 text-sm">
+      <div id="log-loading" class="flex items-center gap-2 py-8 justify-center text-ink-quiet text-sm">
         <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
         </svg>
         Loading logs…
       </div>
-      <div id="log-empty" class="hidden py-8 text-center text-gray-600 text-sm">
-        <svg class="w-8 h-8 mx-auto mb-2 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+      <div id="log-empty" class="hidden py-8 text-center text-ink-quiet text-sm">
+        <svg class="w-8 h-8 mx-auto mb-2 text-ink-quiet" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
           <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/>
         </svg>
         No syslogs received from this device yet.
@@ -464,15 +464,15 @@
     </div>
 
     <!-- Severity legend -->
-    <div class="px-6 py-3 border-t border-gray-800 flex-shrink-0">
-      <div class="flex items-center gap-3 flex-wrap text-xs text-gray-600">
-        <span class="font-medium text-gray-500">Severity:</span>
+    <div class="px-6 py-3 border-t border-surface-border flex-shrink-0">
+      <div class="flex items-center gap-3 flex-wrap text-xs text-ink-quiet">
+        <span class="font-medium text-ink-faint">Severity:</span>
         <span class="flex items-center gap-1"><span class="dot bg-red-500 w-2 h-2"></span>critical</span>
         <span class="flex items-center gap-1"><span class="dot bg-red-500 w-2 h-2"></span>error</span>
         <span class="flex items-center gap-1"><span class="dot bg-yellow-500 w-2 h-2"></span>warning</span>
         <span class="flex items-center gap-1"><span class="dot bg-blue-500 w-2 h-2"></span>notice</span>
-        <span class="flex items-center gap-1"><span class="dot bg-gray-500 w-2 h-2"></span>info</span>
-        <span class="flex items-center gap-1"><span class="dot bg-gray-700 w-2 h-2"></span>debug</span>
+        <span class="flex items-center gap-1"><span class="dot bg-ink-faint w-2 h-2"></span>info</span>
+        <span class="flex items-center gap-1"><span class="dot bg-ink-quiet w-2 h-2"></span>debug</span>
       </div>
     </div>
   </div>
@@ -517,8 +517,8 @@ const SEVERITY_STYLE = {
   error:     { row: 'border-red-700 bg-red-950/40',    badge: 'bg-red-900 text-red-300',    dot: 'bg-red-500' },
   warning:   { row: 'border-yellow-700 bg-yellow-950/40', badge: 'bg-yellow-900 text-yellow-300', dot: 'bg-yellow-500' },
   notice:    { row: 'border-blue-700 bg-blue-950/40', badge: 'bg-blue-900 text-blue-300',   dot: 'bg-blue-500' },
-  info:      { row: 'border-gray-700 bg-gray-800/40', badge: 'bg-gray-700 text-gray-300',   dot: 'bg-gray-500' },
-  debug:     { row: 'border-gray-800 bg-gray-900/60', badge: 'bg-gray-800 text-gray-600',   dot: 'bg-gray-700' },
+  info:      { row: 'border-surface-border bg-surface-alt/40', badge: 'bg-surface-alt text-ink-body',   dot: 'bg-ink-faint' },
+  debug:     { row: 'border-surface-border bg-surface/60', badge: 'bg-surface text-ink-quiet',   dot: 'bg-ink-quiet' },
 };
 
 const fallbackSeverityStyle = SEVERITY_STYLE.info;
@@ -814,8 +814,8 @@ function openPanel(device) {
     const m = device.metadata;
     const status = m.status ?? 'unknown';
     const statusCls = status === 'running'
-      ? 'text-emerald-400' : status === 'paused'
-      ? 'text-yellow-400' : 'text-gray-500';
+      ? 'text-accent' : status === 'paused'
+      ? 'text-yellow-400' : 'text-ink-faint';
     document.getElementById('dm-status').innerHTML =
       `<span class="${statusCls} font-medium">${esc(status)}</span>`;
     document.getElementById('dm-image').textContent    = m.image    ?? '—';
@@ -839,12 +839,12 @@ function openPanel(device) {
   if (hostContainers && hostContainers.length > 0) {
     hostContainersList.innerHTML = hostContainers.map(c => {
       const s = c.status ?? 'unknown';
-      const sCls = s === 'running' ? 'text-emerald-400' : s === 'paused' ? 'text-yellow-400' : 'text-gray-500';
-      return `<div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs bg-gray-800/50 rounded-lg p-2">
-        <span class="text-gray-500">Name</span><span class="font-mono text-cyan-300">${esc(c.container_name ?? '—')}</span>
-        <span class="text-gray-500">Image</span><span class="font-mono text-gray-300 break-all">${esc(c.image ?? '—')}</span>
-        <span class="text-gray-500">Status</span><span class="${sCls} font-medium">${esc(s)}</span>
-        <span class="text-gray-500">ID</span><span class="font-mono text-gray-500">${esc((c.container_id ?? '').slice(0, 12))}</span>
+      const sCls = s === 'running' ? 'text-accent' : s === 'paused' ? 'text-yellow-400' : 'text-ink-faint';
+      return `<div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs bg-surface rounded-lg p-2 border border-surface-border">
+        <span class="text-ink-faint">Name</span><span class="mono text-accent">${esc(c.container_name ?? '—')}</span>
+        <span class="text-ink-faint">Image</span><span class="mono text-ink-body break-all">${esc(c.image ?? '—')}</span>
+        <span class="text-ink-faint">Status</span><span class="${sCls} font-medium">${esc(s)}</span>
+        <span class="text-ink-faint">ID</span><span class="mono text-ink-quiet">${esc((c.container_id ?? '').slice(0, 12))}</span>
       </div>`;
     }).join('');
     hostContainersMeta.classList.remove('hidden');
@@ -860,9 +860,9 @@ function openPanel(device) {
     const m = device.metadata;
     const pxStatus = m.status ?? 'unknown';
     const pxStatusCls = pxStatus === 'running'
-      ? 'text-emerald-400 font-medium'
+      ? 'text-accent font-medium'
       : pxStatus === 'stopped'
-      ? 'text-gray-500' : 'text-amber-400';
+      ? 'text-ink-faint' : 'text-yellow-400';
     document.getElementById('pm-node').textContent   = m.node   ?? '—';
     document.getElementById('pm-vmid').textContent   = m.vm_id  ?? '—';
     document.getElementById('pm-status').innerHTML   = `<span class="${pxStatusCls}">${esc(pxStatus)}</span>`;
@@ -950,9 +950,9 @@ function logRow(log) {
     <div class="min-w-0 flex-1">
       <div class="flex items-center gap-2 flex-wrap">
         <span class="badge ${style.badge} text-[10px] px-1.5 py-0.5">${esc(log.severity)}</span>
-        <span class="text-[10px] text-gray-500">${formatTs(log.timestamp)}</span>
+        <span class="text-[10px] text-ink-quiet">${formatTs(log.timestamp)}</span>
       </div>
-      <p class="text-xs text-gray-200 mt-1 break-words leading-relaxed font-mono">${esc(log.message)}</p>
+      <p class="text-xs text-ink-body mt-1 break-words leading-relaxed mono">${esc(log.message)}</p>
     </div>
   </div>`;
 }
@@ -980,7 +980,7 @@ async function saveAlias() {
     document.getElementById('panel-name').textContent = alias || activeDevice.name || activeDevice.ip;
 
     msgEl.textContent = 'Saved.';
-    msgEl.className   = 'text-xs mt-1 h-4 text-emerald-400';
+    msgEl.className   = 'text-xs mt-1 h-4 text-accent';
     renderTable(allDevices);
     setTimeout(() => { msgEl.textContent = ''; }, 2500);
   } catch (err) {
@@ -1021,7 +1021,7 @@ async function saveType() {
     panelBadge.textContent = badge.label;
 
     msgEl.textContent = 'Saved.';
-    msgEl.className   = 'text-xs mt-1 h-4 text-emerald-400';
+    msgEl.className   = 'text-xs mt-1 h-4 text-accent';
     renderTable(allDevices);
     setTimeout(() => { msgEl.textContent = ''; }, 2500);
   } catch (err) {
@@ -1051,7 +1051,7 @@ async function saveNotes() {
     activeDevice.notes = notes;
 
     msgEl.textContent = 'Saved.';
-    msgEl.className   = 'text-xs mt-1 h-4 text-emerald-400';
+    msgEl.className   = 'text-xs mt-1 h-4 text-accent';
     setTimeout(() => { msgEl.textContent = ''; }, 2500);
   } catch (err) {
     msgEl.textContent = `Error: ${err.message}`;
@@ -1080,7 +1080,7 @@ async function saveSyslogIp() {
     activeDevice.syslog_ip = syslogIp;
 
     msgEl.textContent = 'Saved.';
-    msgEl.className   = 'text-xs mt-1 h-4 text-emerald-400';
+    msgEl.className   = 'text-xs mt-1 h-4 text-accent';
     setTimeout(() => { msgEl.textContent = ''; }, 2500);
 
     // Reload logs using the new syslog IP
