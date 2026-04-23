@@ -83,76 +83,27 @@
 <body class="dark bg-surface text-ink-primary min-h-screen antialiased">
 
 <!-- ═══════════════════════════════════════════ HEADER ══ -->
-<header class="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-30">
-  <div class="max-w-screen-2xl mx-auto px-6 py-4 flex items-center justify-between gap-6 flex-wrap">
+<header class="border-b border-surface-border bg-surface sticky top-0 z-30">
+  <div class="max-w-screen-2xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
 
     <!-- Brand -->
     <div class="flex items-center gap-3">
-      <svg class="w-7 h-7 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-        <path stroke-linecap="round" stroke-linejoin="round"
-          d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0H3" />
-      </svg>
-      <div>
-        <h1 class="text-base font-semibold text-gray-100 leading-none">Network Monitor</h1>
-        <p class="text-xs text-gray-500 mt-0.5">Local network discovery &amp; syslog viewer</p>
+      <div class="w-7 h-7 rounded-md bg-surface-card border border-surface-border flex items-center justify-center text-accent mono text-sm font-semibold">nc</div>
+      <div class="flex items-baseline gap-2.5">
+        <span class="wordmark text-ink-primary text-xl">netcensus</span>
+        <span class="text-ink-quiet text-xs" id="deployment-label">/ homelab-core</span>
       </div>
     </div>
 
-    <!-- Stats chips -->
-    <div class="flex items-center gap-2 flex-wrap text-xs">
-      <span class="stat-chip px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300" id="stat-total">
-        <span class="text-gray-500">Total</span> <span id="count-total" class="font-semibold text-gray-100 ml-1">–</span>
-      </span>
-      <span class="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-300">
-        <span class="text-gray-500">Bare-metal</span> <span id="count-bm" class="font-semibold text-gray-300 ml-1">–</span>
-      </span>
-      <span class="px-3 py-1.5 rounded-lg bg-cyan-950 border border-cyan-900 text-cyan-300">
-        <span class="text-cyan-600">Docker</span> <span id="count-docker" class="font-semibold ml-1">–</span>
-      </span>
-      <span class="px-3 py-1.5 rounded-lg bg-amber-950 border border-amber-900 text-amber-300">
-        <span class="text-amber-600">VM</span> <span id="count-vm" class="font-semibold ml-1">–</span>
-      </span>
-      <span class="px-3 py-1.5 rounded-lg bg-purple-950 border border-purple-900 text-purple-300">
-        <span class="text-purple-600">LXC</span> <span id="count-lxc" class="font-semibold ml-1">–</span>
-      </span>
-    </div>
-
-    <!-- Source health chips -->
-    <div id="source-health" class="flex items-center gap-2 flex-wrap text-xs text-gray-500">
-      <span class="text-gray-600 font-medium">Sources:</span>
-      <span class="source-chip flex items-center gap-1" data-source="opnsense_arp">
-        <span class="dot bg-gray-600 w-2 h-2"></span><span>OPNsense ARP</span>
-      </span>
-      <span class="source-chip flex items-center gap-1" data-source="opnsense_dhcp">
-        <span class="dot bg-gray-600 w-2 h-2"></span><span>DHCP</span>
-      </span>
-      <span class="source-chip flex items-center gap-1" data-source="proxmox">
-        <span class="dot bg-gray-600 w-2 h-2"></span><span>Proxmox</span>
-      </span>
-      <span class="source-chip flex items-center gap-1" data-source="docker">
-        <span class="dot bg-gray-600 w-2 h-2"></span><span>Docker</span>
-      </span>
-      <span class="source-chip flex items-center gap-1" data-source="opnsense_ndp">
-        <span class="dot bg-gray-600 w-2 h-2"></span><span>NDP</span>
-      </span>
-      <span class="source-chip flex items-center gap-1" data-source="nmap">
-        <span class="dot bg-gray-600 w-2 h-2"></span><span>nmap</span>
-      </span>
-      <span class="source-chip flex items-center gap-1" data-source="snmp">
-        <span class="dot bg-gray-600 w-2 h-2"></span><span>SNMP</span>
-      </span>
-    </div>
-
-    <!-- Refresh controls -->
-    <div class="flex items-center gap-3">
-      <span class="flex items-center gap-1.5 text-xs text-gray-500">
-        <span class="dot live-dot bg-emerald-500"></span>
+    <!-- Live dot + Refresh -->
+    <div class="flex items-center gap-4">
+      <span class="flex items-center gap-2 text-xs text-ink-faint">
+        <span class="dot live-dot bg-accent" style="box-shadow:0 0 8px rgba(94,234,212,0.5);"></span>
         <span id="last-updated">–</span>
       </span>
       <button id="btn-refresh"
-        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-               bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
-        <svg id="refresh-icon" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        class="px-3.5 py-1.5 rounded-md text-xs font-medium border border-accent text-accent hover:bg-accent hover:text-surface transition-colors">
+        <svg id="refresh-icon" class="w-3.5 h-3.5 inline-block mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
         </svg>
         Refresh
