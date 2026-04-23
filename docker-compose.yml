@@ -1,5 +1,5 @@
 services:
-  network-monitor:
+  netcensus:
     build: .
     # host networking lets the container bind UDP 514 and receive syslog
     # directly on the host's IP without extra port-mapping complexity.
