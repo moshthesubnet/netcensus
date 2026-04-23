@@ -399,6 +399,20 @@ async def _scan_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    demo_mode = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
+
+    if demo_mode:
+        # Demo path: bypass scanners and syslog; populate DB once and idle.
+        from src.demo_seed import seed_demo_db
+        db_path = os.environ.get("DB_PATH", "network_monitor.db")
+        counts = await seed_demo_db(db_path)
+        logger.info("DEMO_MODE active: seeded %s", counts)
+        try:
+            yield
+        finally:
+            logger.info("DEMO_MODE shutdown: nothing to clean up")
+        return
+
     # 1. Database
     await init_db()
     logger.info("Database initialised at %s", os.path.abspath(
