@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 320" role="img" aria-label="Before: an ARP scanner on one VLAN cannot reach devices on other VLANs. After: netcensus queries OPNsense, Proxmox, and Docker, which all already see every VLAN.">
+  <defs>
+    <style>
+      .bg      { fill: #111111; }
+      .panel   { fill: #1a1a1a; stroke: #262626; stroke-width: 1; rx: 8; ry: 8; }
+      .vlan    { fill: #1c1c1c; stroke: #262626; stroke-width: 1; rx: 4; ry: 4; }
+      .label   { font: 600 11px 'Fira Code','Courier New',monospace; fill: #fafafa; }
+      .sub     { font: 400 10px system-ui, -apple-system, sans-serif; fill: #a3a3a3; }
+      .axis    { font: 600 9px system-ui,sans-serif; fill: #737373; letter-spacing: 0.12em; text-transform: uppercase; }
+      .title   { font: 400 16px Georgia, serif; fill: #fafafa; }
+      .good    { stroke: #5eead4; stroke-width: 1.5; fill: none; marker-end: url(#good); }
+      .bad     { stroke: #f87171; stroke-width: 1.5; fill: none; marker-end: url(#bad); }
+      .block   { fill: #f87171; font: 700 16px system-ui,sans-serif; }
+    </style>
+    <marker id="good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5eead4"/>
+    </marker>
+    <marker id="bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f87171"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="900" height="320"/>
+  <text x="30" y="34" class="title">The VLAN problem — and the way around it</text>
+
+  <!-- BEFORE panel -->
+  <g>
+    <rect class="panel" x="30" y="60" width="400" height="240"/>
+    <text x="50" y="84" class="axis">Before · ARP broadcast</text>
+
+    <rect class="vlan" x="50"  y="100" width="100" height="36"/>
+    <text x="60" y="123" class="label">scanner</text>
+
+    <rect class="vlan" x="280" y="100" width="120" height="36"/>
+    <text x="294" y="123" class="label">VLAN 10</text>
+    <rect class="vlan" x="280" y="150" width="120" height="36"/>
+    <text x="294" y="173" class="label">VLAN 20</text>
+    <rect class="vlan" x="280" y="200" width="120" height="36"/>
+    <text x="294" y="223" class="label">VLAN 30</text>
+    <rect class="vlan" x="280" y="250" width="120" height="36"/>
+    <text x="294" y="273" class="label">VLAN 99</text>
+
+    <!-- Crossed-out arrows to other VLANs -->
+    <path class="bad" d="M 150 118 C 210 118, 230 168, 280 168"/>
+    <path class="bad" d="M 150 118 C 210 118, 230 218, 280 218"/>
+    <path class="bad" d="M 150 118 C 210 118, 230 268, 280 268"/>
+    <text x="215" y="174" class="block">×</text>
+    <text x="215" y="224" class="block">×</text>
+    <text x="215" y="274" class="block">×</text>
+    <path class="good" d="M 150 118 H 280"/>
+  </g>
+
+  <!-- AFTER panel -->
+  <g>
+    <rect class="panel" x="470" y="60" width="400" height="240"/>
+    <text x="490" y="84" class="axis">After · API-driven</text>
+
+    <rect class="vlan" x="490" y="100" width="140" height="32"/>
+    <text x="504" y="121" class="label">OPNsense API</text>
+
+    <rect class="vlan" x="490" y="142" width="140" height="32"/>
+    <text x="504" y="163" class="label">Proxmox API</text>
+
+    <rect class="vlan" x="490" y="184" width="140" height="32"/>
+    <text x="504" y="205" class="label">Docker API</text>
+
+    <rect class="vlan" x="720" y="140" width="130" height="36"/>
+    <text x="736" y="163" class="label">netcensus</text>
+
+    <path class="good" d="M 630 116 C 680 116, 700 158, 720 158"/>
+    <path class="good" d="M 630 158 H 720"/>
+    <path class="good" d="M 630 200 C 680 200, 700 158, 720 158"/>
+
+    <text x="490" y="260" class="sub">Every VLAN is visible — the router / hypervisor / daemons</text>
+    <text x="490" y="276" class="sub">already see every segment. One auth'd HTTPS call each.</text>
+  </g>
+</svg>
