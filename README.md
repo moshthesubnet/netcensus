@@ -1,101 +1,82 @@
-# Network Monitor
+<h1>netcensus</h1>
 
-A unified dashboard for every device on your homelab network — bare metal, VMs, LXCs, and containers — discovered without raw sockets, without layer-2 boundaries, and without blind spots.
+Cross-VLAN homelab device inventory — every bare-metal host, VM, LXC, and container in one view. Queries OPNsense, Proxmox, and Docker instead of broadcasting, so no raw sockets and no per-segment scanners.
 
-See [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) for full architecture and feature details.
+**Try it in one command** (no config, no credentials):
 
----
+```bash
+docker compose -f docker-compose.demo.yml up
+```
 
-## How it works
-
-Standard ARP scanning can't cross VLAN boundaries. This app bypasses that entirely by querying the sources that already have complete network visibility:
-
-- **OPNsense** — the edge router's global ARP/NDP table covers every VLAN in a single API call
-- **Proxmox** — the hypervisor reports every VM and LXC by MAC before a packet hits the wire
-- **Docker Engine API** — each daemon reports running containers with their virtual MACs and IPs
-
-These are queried concurrently each scan cycle and merged into a SQLite-backed device registry. An async UDP syslog receiver (port 514) runs alongside the API, parsing OPNsense `filterlog` payloads into human-readable firewall summaries.
+Then open <http://localhost:8080>.
 
 ---
 
-## Requirements
+## The problem
 
-- OPNsense with API access enabled (core requirement)
-- Docker (recommended) **or** Python 3.11+ for bare-metal installs
-- Proxmox API token (optional)
-- Docker Engine TCP sockets exposed on monitored hosts (optional)
+Standard network scanners rely on layer-2 ARP broadcasts. A process runs on a host, sends ARP requests, and maps replies to IP / MAC pairs. In a segmented network, this has a fundamental flaw: **ARP does not cross VLAN boundaries**. A scanner running on VLAN 30 is blind to VLANs 10, 20, 99. The usual workarounds — one scanner per VLAN, promiscuous-mode capture, flooding every segment — all need raw sockets, root, or brittle host-level configuration. None of them scale cleanly to a homelab with 5+ VLANs, dozens of VMs, and multiple Docker hosts.
 
----
+Layer-2 also can't answer *is this IP a VM or a bare-metal host? Which Proxmox node owns it? What containers share a host's network stack?*
 
-## Running with Docker (recommended)
+![Why ARP fails — and the way around it](docs/images/vlan-before-after.svg)
+
+## The approach
+
+- **OPNsense** as the edge router sees every VLAN it routes — its API returns the global ARP and NDP tables in one authenticated call.
+- **Proxmox** knows every VM and LXC by MAC, node, and status before a packet hits the wire.
+- **Docker Engine API** reports running containers with their virtual MACs and bridge IPs.
+
+Query all three concurrently each cycle, merge into one SQLite-backed device registry, and you have every endpoint on the network — no raw sockets, no per-VLAN probes, no root required for the core discovery path.
+
+![netcensus architecture](docs/images/architecture.svg)
+
+## Dashboard
+
+![netcensus dashboard](docs/images/dashboard.png)
+
+*The demo seed above: 6 VLANs, 47 devices, one intentional `device_gone` alert on VLAN 99.*
+
+## Feature highlights
+
+- **Cross-VLAN discovery via OPNsense** — one authenticated call covers every VLAN the router is aware of.
+- **Proxmox VM and LXC inventory** — per-node concurrent polling, QEMU Guest Agent IP fallback when ARP hasn't resolved yet, LXC `/interfaces` fallback, stopped guests tracked too.
+- **Distributed Docker mapping** — multiple Docker Engine TCP sockets queried in parallel; host-network containers correctly attributed to the daemon host's ARP entry.
+- **Automatic hostnames via OPNsense DHCP** — active leases populate names on discovery; manual aliases always win.
+- **Integrated real-time syslog receiver** — async UDP on port 514, parses OPNsense `filterlog` CSV into human-readable rule summaries, links logs to their source device.
+- **Optional supplemental scanning (nmap + SNMP)** — covers subnets not managed by OPNsense; SNMP walks managed-switch ARP caches.
+- **Disappearance tracking and webhook alerts** — `device_gone` and `device_discovered` events POST to any HTTP endpoint.
+
+Deeper technical detail in **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
+
+## Try it
+
+**Demo (no infrastructure required):**
+
+```bash
+docker compose -f docker-compose.demo.yml up
+# Dashboard: http://localhost:8080
+```
+
+The demo bypasses the scanner and syslog server and populates a fresh SQLite DB with a deterministic seeded homelab.
+
+**Real usage:**
 
 ```bash
 git clone https://github.com/moshthesubnet/netcensus.git
 cd netcensus
-
 cp .env.example .env
-# Edit .env with your OPNsense/Proxmox/Docker credentials
-
+# Fill in OPNsense / Proxmox / Docker credentials
 docker compose up -d
+# Dashboard: http://<host-ip>:8000
+# Syslog:    UDP <host-ip>:514
 ```
 
-The container runs with `network_mode: host` so it binds UDP 514 directly on the host's IP without extra port-mapping. The SQLite database is persisted in `./data/`.
+Bare-metal install (Python 3.12+): `python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && sudo ./start.sh`. Root is required only to bind UDP 514.
 
-Dashboard: `http://<host-ip>:8000`
-API docs: `http://<host-ip>:8000/docs`
-Syslog: UDP `<host-ip>:514`
+## Stack
+
+Python 3.12 · FastAPI · asyncio · aiosqlite · Tailwind (CDN). No build step.
 
 ---
 
-## Running without Docker
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env
-# Edit .env with your credentials
-
-# Root is required only to bind UDP port 514
-sudo ./start.sh
-```
-
----
-
-## Configuration
-
-All configuration is via environment variables. Copy `.env.example` to `.env` and fill in your values.
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `OPNSENSE_URL` | Yes | — | OPNsense base URL (e.g. `https://192.168.1.1`) |
-| `OPNSENSE_KEY` | Yes | — | OPNsense API key |
-| `OPNSENSE_SECRET` | Yes | — | OPNsense API secret |
-| `PROXMOX_NODES` | No | — | JSON array of Proxmox node credentials |
-| `DOCKER_HOSTS` | No | — | Comma-separated Docker TCP socket URLs |
-| `SCAN_INTERVAL_SECONDS` | No | `300` | Seconds between scan cycles |
-| `SYSLOG_PORT` | No | `514` | UDP port for the syslog receiver |
-| `NMAP_SUBNETS` | No | — | CIDRs for supplemental nmap sweeps |
-| `SNMP_HOSTS` | No | — | JSON array of SNMP hosts to walk |
-| `ALERT_WEBHOOK_URL` | No | — | HTTP endpoint for device alerts |
-| `ALERT_DISAPPEARANCE_THRESHOLD` | No | `3` | Missed scans before firing a `device_gone` alert |
-| `DB_PATH` | No | `network_monitor.db` | SQLite database path |
-
----
-
-## Project structure
-
-```
-src/
-  main.py           # FastAPI app, endpoints, scan lifecycle
-  scanner.py        # ARP scan (scapy, optional fallback)
-  opnsense.py       # OPNsense ARP/NDP/DHCP API client
-  identifiers.py    # MAC OUI lookup, Docker, Proxmox API
-  syslog_server.py  # Async UDP syslog receiver + parser
-  database.py       # SQLite schema and async CRUD
-  nmap_scanner.py   # Optional nmap sweep integration
-  snmp_scanner.py   # Optional SNMP ARP-cache walk
-frontend/
-  index.html        # Single-page dark-mode dashboard
-```
+Skyler King · [moshthesubnet.com](https://moshthesubnet.com) · MIT License · See [ARCHITECTURE.md](./ARCHITECTURE.md) for the deep dive.
