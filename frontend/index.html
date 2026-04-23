@@ -194,12 +194,12 @@
   </div>
 
   <!-- Bulk action bar (visible when rows are selected) -->
-  <div id="bulk-bar" class="hidden mb-4 rounded-xl bg-indigo-950 border border-indigo-700 px-4 py-3 flex items-center gap-3 flex-wrap">
-    <span id="bulk-count" class="text-sm font-medium text-indigo-200"></span>
+  <div id="bulk-bar" class="hidden mb-4 rounded-lg bg-surface-card border border-surface-border px-4 py-3 flex items-center gap-3 flex-wrap">
+    <span id="bulk-count" class="text-sm font-medium text-ink-primary"></span>
     <div class="flex items-center gap-2 ml-auto flex-wrap">
       <select id="bulk-type-select"
-        class="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-sm text-gray-200
-               focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        class="px-3 py-1.5 rounded-md bg-surface-card border border-surface-border text-sm text-ink-primary
+               focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent">
         <option value="">Retype as…</option>
         <option value="bare-metal">Bare-metal</option>
         <option value="vm">VM</option>
@@ -215,15 +215,15 @@
         <option value="iot">IoT</option>
       </select>
       <button id="bulk-retype"
-        class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
+        class="px-3 py-1.5 rounded-md text-xs font-medium border border-accent text-accent hover:bg-accent hover:text-surface transition-colors">
         Apply Type
       </button>
       <button id="bulk-export"
-        class="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors">
+        class="px-3 py-1.5 rounded-md text-xs font-medium bg-surface-card border border-surface-border hover:border-ink-quiet text-ink-body transition-colors">
         Export Selection
       </button>
       <button id="bulk-clear"
-        class="px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors">
+        class="px-3 py-1.5 rounded-md text-xs font-medium text-ink-faint hover:text-ink-primary transition-colors">
         Clear
       </button>
     </div>
