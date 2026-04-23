@@ -1,416 +1,132 @@
-# API-Driven Cross-VLAN Network Monitor
+# netcensus — architecture
 
-> A unified "God View" of every device on your homelab network — bare metal, VMs, LXCs, and containers — discovered without raw sockets, without layer-2 boundaries, and without blind spots.
-
----
-
-## The Problem
-
-Standard network scanners rely on layer-2 ARP broadcasts. A process runs on a host, sends ARP requests, and maps replies to IP/MAC pairs. This approach has a fundamental flaw in segmented networks: **ARP does not cross VLAN boundaries**. A scanner running on VLAN 30 is completely blind to devices on VLANs 10, 20, or 99 without a dedicated probe on each segment.
-
-The common workarounds — running a scanner per VLAN, promiscuous-mode capture, or flooding every segment — all require root privileges, raw sockets, or brittle host-level configuration. In a homelab with 5+ VLANs, dozens of VMs, and multiple Docker hosts, none of these scale cleanly.
-
-Additionally, layer-2 scanning alone cannot answer: *Is that IP a VM or a bare-metal host? Which Proxmox node is it on? What containers are sharing that host's network stack?* Resolving those questions requires a different approach entirely.
+*A unified view of every device on a segmented homelab network — bare metal, VMs, LXCs, and containers — discovered without raw sockets, without layer-2 probes on every VLAN, and without root on the core discovery path.*
 
 ---
 
-## The Solution
+## 1. The problem
 
-This application bypasses layer-2 limits entirely by querying the authoritative sources that already have complete network visibility:
+Standard network scanners rely on layer-2 ARP broadcasts. A process sends ARP requests and maps replies to IP/MAC pairs. This works fine on a flat network. In a segmented one, it has a structural flaw: **ARP does not cross VLAN boundaries**. A scanner running on VLAN 30 is completely blind to devices on VLANs 10, 20, or 99. Every VLAN boundary is a hard visibility wall.
 
-- **OPNsense** — as the edge router, it maintains the global ARP and NDP tables for every VLAN it routes. Its REST API surfaces all of this over a single authenticated HTTPS call.
-- **Proxmox** — the hypervisor knows the MAC address, VM name, node assignment, and live status of every guest before a single packet hits the wire.
-- **Docker Engine API** — each daemon reports its running containers with their virtual MAC addresses and bridge IPs.
+The usual workarounds are all painful at scale. Running a scanner per VLAN multiplies operational burden and requires a reachable host on every segment. Promiscuous-mode capture at the router level requires raw sockets and root privileges — and still only answers "who is on the wire," not "is this a VM or a container." Flooding every segment with ARP probes is noisy, requires root, and doesn't tell you anything about the guest stack sitting above the MAC.
 
-These three sources are queried concurrently every scan cycle and merged into a single SQLite-backed device registry. The result is a real-time dashboard with full-stack context for every endpoint on the network — no raw sockets, no per-VLAN probes, no root required for the core discovery path.
+The deeper problem is that layer-2 scanning answers the wrong question. Knowing that `10.30.40.5` responded to ARP on `aa:bb:cc:dd:ee:ff` tells you very little about what that device actually is. It can't tell you which Proxmox node owns that VM, what containers are sharing that host's network stack, or whether the device is stopped and the IP has been reallocated. Answering those questions requires asking the systems that already have that information — not inferring it from traffic.
 
----
+## 2. Solution
 
-## Key Features
+The application bypasses layer-2 entirely by querying the three authoritative sources that already have complete network visibility. **OPNsense**, as the edge router, maintains the global ARP table (IPv4) and NDP neighbour table (IPv6) for every VLAN it routes. One authenticated HTTPS call to its REST API returns every network-present device across all segments — something no single-segment scanner can match. **Proxmox** knows the MAC address, VMID, node assignment, and power state of every guest before a single packet hits the wire. It's the ground truth for what's a VM versus bare metal. **Docker Engine API** reports running containers with their virtual MACs and bridge IPs — and crucially, it knows which containers are running in host-network mode and therefore share the daemon host's identity.
 
-- **Cross-VLAN hardware discovery via OPNsense REST API**
-  Pulls the global ARP table (IPv4) and NDP neighbour table (IPv6) from OPNsense, covering every VLAN the router is aware of in a single authenticated API call. DHCP leases are fetched separately to auto-populate device hostnames.
+These three sources are queried concurrently every scan cycle and merged into a single SQLite-backed device registry. The result is a real-time inventory with full-stack context for every endpoint on the network. Optional nmap ping sweeps and SNMP ARP-cache walks cover edge cases — subnets not routed through OPNsense, or managed switches that maintain their own ARP tables.
 
-- **Multi-node Proxmox VM and LXC inventory**
-  Polls one or more Proxmox hosts concurrently using per-node API token credentials. For running QEMU VMs, the QEMU Guest Agent is queried for a live IP address as a fallback when ARP hasn't yet resolved the guest. LXC containers use the `/interfaces` endpoint for the same purpose. All guests — including stopped ones — are tracked by MAC address with their node, VMID, and power state.
+![architecture](docs/images/architecture.svg)
 
-- **Distributed Docker container mapping**
-  Queries multiple Docker Engine TCP sockets in parallel, enumerating running containers across all bridge networks. Host-networked containers (which share the daemon host's MAC/IP) are correctly attributed back to the physical host's ARP entry rather than stored as phantom IPs.
+## 3. Architecture walk-through
 
-- **Automatic device naming via OPNsense DHCP**
-  Active DHCP leases from OPNsense's dnsmasq are fetched each cycle and used to set hostnames on newly discovered devices. Manual aliases set through the UI always take precedence and are never overwritten by subsequent scans.
+### 3.1 Discovery loop
 
-- **Integrated real-time syslog receiver**
-  An async UDP server (port 514) runs alongside the FastAPI app, accepting RFC 3164 and RFC 5424 messages. OPNsense `filterlog` CSV payloads are parsed into human-readable firewall rule summaries (`[BLOCK] IN on igb0 | tcp 1.2.3.4:443 → 10.30.0.5:8080`). Logs are stored per source IP and linked to the device that sent them. A secondary syslog IP can be configured per device for appliances that send from a different interface than their management IP.
+The core of the application is a background task that runs on a configurable interval (`SCAN_INTERVAL_SECONDS`, default 300). Each cycle calls `_run_scan_once()`, which fires all seven sources concurrently via `asyncio.gather`:
 
-- **Optional supplemental scanning (nmap + SNMP)**
-  Nmap ping sweeps can cover subnets not managed by OPNsense. SNMP ARP-cache walks can pull device tables from managed switches. Both sources are folded into the main ARP map with OPNsense data taking priority on conflict.
+1. `query_opnsense()` — OPNsense global ARP table (IPv4)
+2. `query_opnsense_ndp()` — OPNsense NDP neighbour table (IPv6)
+3. `query_opnsense_dhcp()` — active DHCP leases (hostname population)
+4. `query_proxmox(PROXMOX_NODES)` — Proxmox VM/LXC inventory, all nodes
+5. `query_docker(DOCKER_HOSTS)` — Docker container inventory, all daemons
+6. `query_nmap(NMAP_SUBNETS)` — optional nmap ping sweep
+7. `query_snmp(SNMP_HOSTS)` — optional SNMP ARP-cache walk
 
-- **Disappearance tracking and webhook alerts**
-  Each scan cycle increments a `disappearance_count` for any device not seen that cycle. When a device crosses a configurable threshold, a `device_gone` webhook fires. New devices trigger a `device_discovered` event. Webhooks POST a structured JSON payload to any HTTP endpoint (e.g. Home Assistant, Slack, ntfy).
+Each source is independently fenced: if OPNsense is unreachable, the scan continues with Proxmox and Docker results. Failures are logged and reflected in the per-source health flags exposed by `/api/health`. The UI renders each source as a coloured dot — green (fresh), amber (stale), red (unknown) — based on whether the last-ok timestamp is within `SCAN_INTERVAL * 2`. This makes source failures immediately visible without the operator having to check logs.
 
-- **Device management UI**
-  Devices can be assigned human-readable aliases, custom type overrides, and free-text notes — all of which survive subsequent scans. The full inventory can be exported as CSV or JSON. A `/api/health` endpoint reports the last-success timestamp and result count for each of the seven discovery sources.
+### 3.2 Merge strategy
 
----
+After all sources return, results are merged into the `devices` table with a defined priority order. **OPNsense ARP is the ground truth for network presence**: a device exists in the registry if and only if it has been seen by OPNsense ARP, Proxmox, or Docker — not by inference. When OPNsense ARP and nmap or SNMP report the same MAC with conflicting IPs, OPNsense wins. nmap and SNMP results are folded in only for MACs not already present in the ARP table.
 
-## Architecture & Tech Stack
+**Proxmox entries enrich existing ARP rows** rather than creating new ones. When a VM's MAC appears in both the OPNsense ARP map and the Proxmox inventory, the device row is enriched with node name, VMID, and power state. When a Proxmox guest is offline and therefore absent from ARP, it is upserted with the IP last reported by the QEMU Guest Agent or LXC interfaces endpoint — so stopped guests remain visible.
 
-### Backend
-| Component | Technology |
-|---|---|
-| API framework | **FastAPI** (Python 3.12), served by **Uvicorn** |
-| Async runtime | `asyncio` — all I/O is non-blocking; no threads except for blocking SDK calls (Docker, Proxmox) offloaded via `run_in_executor` |
-| Database | **SQLite** via `aiosqlite` — two tables: `devices` (keyed by MAC) and `syslogs` (append-only, 30-day rolling retention) |
-| HTTP client | `httpx` — async requests to OPNsense API and outbound webhooks |
+**Docker entries are handled independently**. Bridge-networked containers get their own rows, keyed by virtual MAC. Host-network containers — which share the daemon host's MAC and IP — are not upserted as separate rows. Instead, they are collected during the merge loop and written into the host device's `metadata` JSON blob via `merge_host_containers()`, leaving the host's `device_type`, `vendor`, and identity columns untouched.
 
-### External API Integrations
-| Integration | API / Transport | Auth method |
-|---|---|---|
-| OPNsense ARP/NDP | `GET /api/diagnostics/interface/getArp` / `getNdp` | API key + secret (HTTP Basic Auth) |
-| OPNsense DHCP | `GET /api/dnsmasq/leases/search` | API key + secret (HTTP Basic Auth) |
-| Proxmox VE | `proxmoxer` REST client | Per-node API tokens (`user@pam!token-name`) |
-| Proxmox guest IPs | `qemu/{id}/agent/network-get-interfaces`, `lxc/{id}/interfaces` | Same token, best-effort |
-| Docker Engine | Docker SDK over TCP (`tcp://host:2375`) or Unix socket | Unauthenticated TCP (LAN-internal) |
-| nmap (optional) | Subprocess ping sweep | None (requires `nmap` binary) |
-| SNMP (optional) | ARP-cache MIB walk | Community string |
+**The MAC address is the canonical device identity** throughout. All upserts are `INSERT … ON CONFLICT(mac) DO UPDATE`. IPs are treated as derived and mutable; MACs are durable. This means device history, manual aliases, disappearance counts, and notes survive DHCP churn, VM migration, and container restarts.
 
-### Frontend
-A single-page dark-mode dashboard built with **vanilla JavaScript** and **Tailwind CSS** (CDN). No build step. Served as a static file by FastAPI.
+### 3.3 Syslog pipeline
 
-### Design Shift: From Raw Sockets to Authenticated APIs
-The original prototype used `scapy` to send raw ARP broadcasts — a technique that requires `CAP_NET_RAW` or running as root and is inherently limited to a single layer-2 segment. The current architecture eliminates that dependency entirely for the core discovery path. OPNsense already has the complete ARP table; querying its API over HTTPS is both more privileged-friendly and more accurate than any local broadcast scan could be. The Proxmox and Docker integrations follow the same philosophy: instead of inferring device identity from network traffic, the application asks the hypervisor and container runtime directly.
+An async UDP server runs concurrently with the FastAPI app, implemented as `asyncio.DatagramProtocol`. It binds on `SYSLOG_PORT` (default 514) and is started inside the FastAPI lifespan, sharing the event loop with the scan task and the HTTP server.
 
----
+The parser handles two wire formats: **RFC 3164** (`<PRI>Mmm DD HH:MM:SS HOSTNAME TAG: MSG`) and the OPNsense `filterlog` CSV format. The filterlog parser is the most OPNsense-specific piece: firewall rule log lines are comma-separated with a variable number of fields. Position 26 (the destination port) can be absent on older OPNsense builds when the logged packet is ICMP — the parser treats all positions beyond the mandatory prefix as optional and gracefully handles short records. The output is a human-readable summary: `[BLOCK] IN on igb0 | tcp 1.2.3.4:443 → 10.30.0.5:8080`.
 
-## Environment Configuration
+When a log arrives from `127.0.0.1` (i.e., via an rsyslog relay running on the same host), the parser uses the HOSTNAME field from the message body as the real source IP rather than the UDP source address. This allows centralised syslog forwarding without losing per-device attribution.
 
-All integration endpoints and credentials are supplied via environment variables (`.env` file supported via `python-dotenv`):
+All DB writes from the syslog path are scheduled as `asyncio.create_task` so they never block the receive loop. A 30-day rolling purge runs once per scan cycle to bound database size.
 
-```
-OPNSENSE_URL          # https://10.0.99.1
-OPNSENSE_KEY          # API key (Basic Auth username)
-OPNSENSE_SECRET       # API secret (Basic Auth password)
+### 3.4 Disappearance and alerting
 
-PROXMOX_NODES         # JSON array: [{"host":"…","user":"root@pam","token_id":"…","token_secret":"…"}]
+Every scan cycle, `update_disappearance_counts(seen_macs)` increments the `disappearance_count` column for every device whose MAC was not present in the current scan. When a device is seen again, its `disappearance_count` resets to zero via the upsert's `ON CONFLICT DO UPDATE` clause.
 
-DOCKER_HOSTS          # Comma-separated: tcp://10.30.40.2:2375,tcp://10.30.40.4:2375
-NMAP_SUBNETS          # Comma-separated CIDRs: 10.0.10.0/24,10.0.20.0/24
-SNMP_HOSTS            # JSON array: [{"host":"…","community":"public","port":161}]
+When `disappearance_count` reaches `ALERT_DISAPPEARANCE_THRESHOLD` (default: 3 consecutive missed scans), the scanner fires a `device_gone` webhook. When a device is seen for the first time, it fires `device_discovered`. Both events POST a structured JSON payload to `ALERT_WEBHOOK_URL`:
 
-SCAN_INTERVAL_SECONDS # Discovery cycle frequency (default: 300)
-SYSLOG_PORT           # UDP port for syslog receiver (default: 514, requires root)
-ALERT_WEBHOOK_URL     # HTTP endpoint for device_discovered / device_gone events
-ALERT_DISAPPEARANCE_THRESHOLD  # Scans missed before firing device_gone (default: 3)
-DB_PATH               # SQLite file path (default: ./network_monitor.db)
+```json
+{
+  "event": "device_gone",
+  "timestamp": "2026-04-23T14:22:00Z",
+  "device": {
+    "mac": "aa:bb:cc:dd:ee:ff",
+    "ip": "10.30.40.5",
+    "alias": "proxmox-node-2",
+    "vendor": "Super Micro Computer",
+    "device_type": "bare-metal",
+    "last_seen": "2026-04-23T13:52:00Z"
+  }
+}
 ```
 
----
+Webhook delivery is fire-and-forget with a 5-second timeout. Failures are logged as warnings — the monitoring app does not retry, because transient webhook failures should not affect the scan cycle.
 
-## Phase-by-Phase Development History
+## 4. Design decisions and tradeoffs
 
-### Phase 1 — Initial Prototype (ARP + Basic Identity)
-**Commit:** `8205eb7 Initial commit`
+### Why SQLite, not Postgres
 
-The starting point. A bare Python project with:
-- `src/scanner.py` — async ARP scan via `scapy.srp()` wrapped in `run_in_executor` to avoid blocking the event loop. Bound to a configurable interface (`SCAN_IFACE`).
-- `src/identifiers.py` — MAC OUI vendor lookup using `mac-vendor-lookup` (offline bundled database, async API).
-- `scan.py` — CLI entrypoint for ad-hoc scans with `--json` output and subnet/iface flags.
-- `Device` dataclass with `ip`, `mac`, `vendor`, `hostnames` fields.
-- `requirements.txt` with initial dependencies: `scapy`, `mac-vendor-lookup`, `fastapi`, `aiosqlite`.
+netcensus is a single-process application with a straightforward write pattern: one scanner writes once per 300-second cycle, and the syslog server appends entries as UDP datagrams arrive. There is no concurrent-write pressure that SQLite's single-writer model can't handle — `aiosqlite` serialises all writes through a single async connection, which maps cleanly onto asyncio's own single-threaded event loop. Adding Postgres would mean adding a separate container, a connection pool, and a persistence volume to manage, with no benefit for this workload. SQLite's file-based storage also makes backup trivial: `cp network_monitor.db backup.db` is a complete backup. For a homelab tool that runs on one host and serves one operator, zero ops burden is itself a feature.
 
-**Limitations at this stage:** Single VLAN, root required for ARP, no persistence, no web UI.
+### Why async-first, not threaded
 
----
+The syslog server and the scan loop must run concurrently without blocking each other — and both need to write to the database. The canonical threaded approach would be two threads sharing a queue, with a third thread draining writes. That works, but it introduces lock management, thread-safety concerns on the shared state (`_source_health`, `_host_net_containers`), and more moving parts to debug when something goes wrong. `asyncio` handles all of this without explicit locking: the event loop is single-threaded, so shared state is safe to read and write without mutexes. `asyncio.gather` runs all seven source queries concurrently within the same loop, and `aiosqlite` provides a non-blocking DB interface that fits naturally into it. The one exception is SDK calls (Docker, Proxmox) that use blocking I/O internally — those are offloaded via `run_in_executor` to avoid stalling the loop, while still integrating cleanly with `asyncio.gather`.
 
-### Phase 2 — Docker & Proxmox Identity Enrichment
-**Commits:** `163d983`, `fdb205a`, `de05b50`, `9207762`, `ad3cca9`, `b8e2c61`
+### Why the OPNsense API replaced scapy as the primary discovery path
 
-Layered in the two hypervisor/container integrations:
+The original prototype used `scapy.srp()` to send raw ARP broadcasts. That approach has two hard constraints: it requires `CAP_NET_RAW` or root, and it only sees one layer-2 segment — whichever interface the process is bound to. Both constraints get worse as the homelab grows. Adding a VLAN means adding another scanner instance and another privileged process. OPNsense is already the authoritative router; its ARP and NDP tables are the definitive view of every IP-to-MAC mapping on every VLAN it routes. One authenticated HTTPS call over the management API replaces one raw-socket scan per VLAN, removes the root requirement from the core discovery path, and returns richer data (interface name, expiry status, IPv6 neighbours) than ARP replies alone. `scapy` is still present in `src/scanner.py` as an optional fallback for environments with no OPNsense API — air-gapped homelabs or setups where the router doesn't expose a management interface. It is no longer part of the main discovery loop.
 
-#### Docker Discovery (`src/identifiers.py` — `query_docker`)
-- Added `DockerInfo` dataclass: `name`, `container_id`, `image`, `status`, `networks`, `mac`, `network_mode`, `host_ip`, `docker_host`.
-- Queries the Docker SDK over TCP sockets (`DOCKER_HOSTS` env var, comma-separated).
-- Falls back to local Unix socket (`unix:///var/run/docker.sock`) when no TCP hosts are configured.
-- Host-networked containers (`--network host`) are stored under a synthetic `hostnet:<id>` key and later resolved back to the physical host's ARP entry in the merge step — preventing phantom IPs.
-- Multiple Docker daemons queried concurrently via `run_in_executor`.
+### Why webhooks, not push notifications
 
-#### Proxmox Discovery (`src/identifiers.py` — `query_proxmox`)
-- Added `ProxmoxInfo` dataclass: `name`, `vm_id`, `type` (vm/lxc), `node`, `status`, `ip`.
-- `PROXMOX_NODES` env var: JSON array of per-node credential dicts — supports separate API token per physical host.
-- Authenticates via `proxmoxer` using API tokens (`user@pam!token-name` + UUID secret) or password fallback.
-- Enumerates all QEMU VMs and LXC containers per node.
-- MAC extraction: regex patterns `_QEMU_MAC_RE` (covers `virtio`, `e1000`, `e1000e`, `vmxnet3`, `rtl8139`, `ne2k_pci`) and `_LXC_MAC_RE` (`hwaddr=`) parse the Proxmox net config strings.
-- QEMU Guest Agent fallback (`agent/network-get-interfaces`): for running VMs, queries the guest agent for a live IPv4 address when ARP hasn't resolved it yet. Filters out loopback and link-local addresses.
-- LXC interface fallback (`lxc/{vmid}/interfaces`): queries the `/interfaces` endpoint to get the live IP of running LXC containers, same filtering applied.
-- All nodes queried concurrently using `asyncio.gather` + `run_in_executor`.
+Webhooks integrate with anything without requiring netcensus to own the notification stack. A `device_gone` event POSTed to an HTTP endpoint can be handled by Home Assistant, n8n, ntfy, a Slack incoming webhook, or a five-line shell script — whatever the operator already has. Push notification services require maintaining a registered application, a notification server, and credentials. That's appropriate for consumer apps with thousands of users; it's unnecessary complexity for a homelab tool where the operator already has an alert routing pipeline. The job here is to emit a clean, structured event at the right moment — not to own the last mile of delivery.
 
----
+### Why vanilla HTML + Tailwind CDN, not a framework
 
-### Phase 3 — SQLite Persistence, FastAPI Endpoints & Background Scan Loop
-**Commit:** `c5366b8`
+No build step means no Node.js, no npm, no bundler, and no `node_modules` directory in the Docker image. The entire frontend is `frontend/index.html` — one file, fully auditable without tooling, deployable by copying a single file. Tailwind via CDN adds the CSS utility layer without the PostCSS pipeline that would otherwise be mandatory for tree-shaking. The bundle-size tradeoffs that matter at scale — CDN latency, full Tailwind weight — don't apply for a tool that serves one dashboard to one person on a LAN. A React or Vue build would also add an ongoing maintenance surface: keeping bundlers, loaders, and framework versions in sync is real work. Vanilla JS has no upgrade path to maintain.
 
-The project became a running service:
+### Why MAC as the device identity, not IP
 
-#### Database Layer (`src/database.py`)
-- `devices` table keyed by MAC address with columns: `mac`, `ip`, `vendor`, `device_type`, `alias`, `first_seen`, `last_seen`, `metadata` (JSON blob).
-- `syslogs` table: append-only log storage keyed by `source_ip` with `timestamp`, `severity`, `message`. Index on `source_ip`.
-- `upsert_device()`: `INSERT … ON CONFLICT DO UPDATE` — alias column intentionally excluded from update so manual labels survive re-scans. NULL `ip`/`ipv6` never overwrites a real stored address.
-- `set_hostname_if_unset()`: only sets alias from DHCP/Proxmox when `alias IS NULL` — manual aliases always win.
-- `get_all_devices()`: returns rows ordered by `last_seen DESC`.
-- `get_logs_for_ip()`: most recent 50 syslog rows for a given source IP.
+IP addresses are ephemeral. DHCP leases expire and get reassigned. VMs migrate between Proxmox nodes and pick up new IPs. Docker containers restart with new bridge IPs. If the device table were keyed by IP, a VM migration would look like two separate devices — the old IP disappearing and a new one appearing — losing all history, aliases, and disappearance counts accumulated under the old IP. MAC addresses are durable: a VM retains its virtual MAC across reboots and migrations, a container retains its virtual MAC across restarts, a physical host's MAC never changes. Keying the `devices` table on MAC means that device history, operator aliases, custom type overrides, notes, and disappearance counts survive any IP change. The IP column is just metadata that gets updated in place on each upsert — not the identity.
 
-#### FastAPI Application (`src/main.py`)
-- `GET /api/devices` — list all devices.
-- `GET /api/logs/{ip}` — last 50 syslogs for a device IP.
-- `PUT /api/devices/{mac}/alias` — set human-readable alias.
-- Background scan loop via `asyncio.create_task(_scan_loop())` inside the `lifespan` context manager.
-- Concurrent discovery: `asyncio.gather(query_opnsense(), query_proxmox(), query_docker(), ...)`.
-- Merge logic: OPNsense ARP → Proxmox cross-reference → Docker upserts (independent).
+## 5. Implementation notes (per module)
 
-#### Phase 3.5 — Async Syslog Receiver (`src/syslog_server.py`)
-**Commit:** `40f7ee8`
-- `SyslogProtocol(asyncio.DatagramProtocol)` — UDP server on port 514.
-- Parses **RFC 3164** (`<PRI>Mmm DD HH:MM:SS HOSTNAME TAG: MSG`).
-- Parses **RFC 5424** (`<PRI>VERSION TIMESTAMP HOSTNAME APP PROCID MSGID SD MSG`).
-- OPNsense `filterlog` CSV parsing: converts raw comma-separated firewall log fields into `[BLOCK] IN on igb0 | tcp src:port → dst:port` human-readable format.
-- PRI decoding: extracts severity (0–7) and facility from the priority byte.
-- RFC 3164 timestamp parsing handles the year-rollover boundary (Dec→Jan).
-- rsyslog relay support: when UDP source is `127.0.0.1`, uses the HOSTNAME field from the message as the real source IP.
-- DB writes scheduled as `asyncio.create_task` to never block the receive loop.
-- Runs concurrently with FastAPI; transport started in `lifespan`, closed on shutdown.
+- **`src/main.py`** — FastAPI app, lifespan, endpoint definitions. The lifespan branches on `DEMO_MODE` so the demo path seeds the DB from `demo_seed.py` and never touches production integrations. All background tasks (scan loop, syslog server) are started inside the lifespan and cancelled cleanly on shutdown.
+
+- **`src/scanner.py`** — scapy ARP fallback. Legacy; the OPNsense path is the primary discovery route. Still present for air-gapped homelabs with no OPNsense API. Binds to a configurable interface (`SCAN_IFACE`) and is only invoked if explicitly configured.
+
+- **`src/opnsense.py`** — REST client for OPNsense ARP, NDP, and DHCP tables. Notable implementation detail: the DHCP endpoint (`/api/dnsmasq/leases/search`) accepts both `hwaddr` and `mac` as the MAC field name depending on OPNsense version and DHCP backend (dnsmasq vs. Kea) — the parser handles both. All three functions use `httpx.AsyncClient(verify=False)` with InsecureRequestWarning suppressed, which is correct for OPNsense's self-signed certificate on a LAN-internal management interface.
+
+- **`src/identifiers.py`** — MAC OUI lookup, Docker TCP socket client, Proxmox API client. The interesting merge case is host-network Docker containers: they share the daemon host's MAC, so the merge logic collects them into `_host_net_containers` keyed by host MAC and writes them into the host's metadata blob via `merge_host_containers()` — never emitting a phantom IP row. Proxmox MAC extraction uses regex patterns covering all common virtio and emulated NIC types (`virtio`, `e1000`, `e1000e`, `vmxnet3`, `rtl8139`, `ne2k_pci`) plus LXC `hwaddr=` format.
+
+- **`src/syslog_server.py`** — async UDP DatagramProtocol. Notable constraint: OPNsense filterlog CSV position 26 (destination port) can be absent on older builds for ICMP packets. The parser treats all fields beyond the mandatory header as optional and handles short records without raising. RFC 3164 timestamp parsing handles the year-rollover boundary (December → January) correctly.
+
+- **`src/database.py`** — aiosqlite schema, migrations, upserts by MAC. The `_migrate_add_columns()` function idempotently adds new columns to existing databases (first_seen, metadata, ipv6, custom_type, disappearance_count, notes, scan_count, syslog_ip) — safe to run on every startup. `upsert_device()` intentionally excludes the `alias` column from the `ON CONFLICT DO UPDATE` clause so manual labels are never overwritten by a re-scan. NULL ip/ipv6 values never overwrite a real stored address. All writes go through one async connection to keep aiosqlite's single-writer model consistent across the scan loop and syslog server.
+
+- **`src/demo_seed.py`** — deterministic seed for `DEMO_MODE`. Populates a fresh SQLite DB with a fixed homelab: 6 VLANs, 47 devices, a mix of bare-metal hosts, VMs, LXCs, and Docker containers, one intentional `device_gone` alert on VLAN 99. Deterministic output means a UI change and its dashboard screenshot can land in the same PR with a predictable before/after.
+
+## 6. What's next
+
+- Optional Prometheus metrics exporter (not yet — unclear if anyone but me wants it).
+- Per-device timeline graph (scan-miss history over time — useful, needs a thoughtful schema change to avoid unbounded growth).
+- UI tests via Playwright, scoped to the critical flows only (deferred; not worth the maintenance tax until the UI churns less).
 
 ---
 
-### P1 Audit Fixes — Visibility & Reliability
-**Commit:** `c48ce8a Audit fixes: P1 + P2 visibility and reliability improvements`
-
-A targeted reliability pass fixing schema and source issues found in testing:
-
-#### Database Migrations (`src/database.py`)
-- `_migrate_devices_ip_nullable()`: rebuilds the `devices` table if `ip` has a `NOT NULL` constraint from older schema versions, converting empty strings to `NULL`. Safe to run repeatedly.
-- `_migrate_add_columns()`: idempotently adds new columns to existing databases:
-  - `first_seen` — ISO-8601 UTC timestamp of first discovery.
-  - `metadata` — JSON blob for Proxmox/Docker structured data.
-  - `ipv6` — IPv6 address from NDP table.
-  - `custom_type` — user override for device type.
-  - `disappearance_count` — incremented each scan the device is absent.
-  - `notes` — free-text operator annotation.
-  - `scan_count` — total number of times device has been seen.
-  - `syslog_ip` — secondary IP for syslog lookup (for multi-interface devices).
-
-#### OPNsense Module (`src/opnsense.py`) — extracted from `main.py`
-- `query_opnsense()`: fetches IPv4 ARP table via `GET /api/diagnostics/interface/getArp`. Handles both list response and `{"arp": [...]}` envelope. Filters multicast/broadcast/incomplete entries.
-- `query_opnsense_dhcp()`: fetches active DHCP leases via `GET /api/dnsmasq/leases/search`. Accepts both `hwaddr` and `mac` field names (dnsmasq vs ISC/Kea). Excludes entries with IP-shaped or empty hostnames.
-- `query_opnsense_ndp()`: fetches IPv6 NDP neighbour table via `GET /api/diagnostics/interface/getNdp`. Skips link-local (`fe80:`) addresses — only globally routable IPv6 addresses are stored.
-- All three functions use `httpx.AsyncClient(verify=False)` with `urllib3` InsecureRequestWarning suppressed (expected with OPNsense's self-signed cert).
-
-#### Upsert Improvements
-- `disappearance_count` resets to 0 on every successful upsert (`ON CONFLICT DO UPDATE`).
-- `scan_count` increments by 1 each time a device is seen.
-- NDP-only devices (IPv6 with no ARP entry) are now upserted as their own rows.
-- Proxmox-only devices (offline VMs not in ARP) upserted with their last-known IP.
-
----
-
-### P2 Audit Fixes — Multi-Source Merge & OPNsense Replacement
-**Commits:** `5acb0be`, `b8e2c61`, `9207762`, `ad3cca9`
-
-The most significant architectural change: **scapy ARP scanning removed entirely** as the primary discovery source, replaced by the OPNsense global ARP table.
-
-#### OPNsense as Primary ARP Source
-- Replaced `scapy.srp()` with `query_opnsense()` API call — no raw sockets, no root required for discovery.
-- Covers all VLANs the OPNsense router handles in a single API call.
-- The `src/scanner.py` file (scapy-based) retained for optional CLI use but no longer part of the main discovery loop.
-
-#### Multi-Source Merge in `_run_scan_once()` (`src/main.py`)
-Seven sources now run concurrently via `asyncio.gather`:
-1. `query_opnsense()` → ARP map (MAC → IPv4)
-2. `query_opnsense_ndp()` → NDP map (MAC → IPv6)
-3. `query_opnsense_dhcp()` → DHCP map (MAC → hostname)
-4. `query_proxmox(PROXMOX_NODES)` → Proxmox map (MAC → ProxmoxInfo)
-5. `query_docker(DOCKER_HOSTS)` → Docker map (IP → DockerInfo)
-6. `query_nmap(NMAP_SUBNETS)` → nmap map (MAC → IPv4) — optional
-7. `query_snmp(SNMP_HOSTS)` → SNMP map (MAC → IPv4) — optional
-
-Merge priority order:
-- OPNsense ARP takes precedence on IP conflict with nmap/SNMP.
-- nmap and SNMP results folded in only for MACs not already in ARP table.
-- Proxmox entries: if MAC is in ARP, enriched with VM metadata; if not in ARP (offline guest), upserted with Proxmox-supplied IP from guest agent.
-- NDP-only entries (IPv6, no ARP match, no Proxmox match): stored with NULL IPv4.
-- Docker entries: upserted independently; host-net containers resolved via reverse ARP map.
-
-#### Per-Node Proxmox Credentials
-- `PROXMOX_NODES` is a JSON array — each element is an independent credential set.
-- Allows different API tokens per physical Proxmox host.
-- All nodes queried concurrently.
-
----
-
-### P3 — Enriched Discovery & Additional Sources
-**Commit:** `d183ca0 Add P3 + P4 features: enriched discovery, device management, and dashboard improvements`
-
-#### nmap Integration (`src/nmap_scanner.py`)
-- `query_nmap(subnets)`: runs `nmap -sn -oX -` as an async subprocess against configured CIDRs.
-- Parses nmap's XML output to extract `ipv4` + `mac` address pairs.
-- Only hosts with MAC addresses (L2-reachable) are returned — remote-ping-only hosts skipped since the device table is keyed by MAC.
-- 120-second per-subnet timeout. Graceful fallback if `nmap` binary not found.
-- Controlled by `NMAP_SUBNETS` env var (comma-separated CIDRs).
-
-#### SNMP Integration (`src/snmp_scanner.py`)
-- `query_snmp(hosts)`: walks `ipNetToMediaPhysAddress` MIB OID `1.3.6.1.2.1.4.22.1.2` via `snmpwalk` subprocess.
-- Parses `Hex-STRING:` and `STRING:` output formats; normalises to `aa:bb:cc:dd:ee:ff` form.
-- IP extracted from OID suffix (`.ifIndex.a.b.c.d`).
-- 15-second per-host timeout. Graceful fallback if `snmpwalk` not found.
-- Controlled by `SNMP_HOSTS` env var (JSON array of `{host, community, port}` dicts).
-
-#### New API Endpoints (`src/main.py`)
-- `PUT /api/devices/{mac}/notes` — persist/clear free-text operator notes.
-- `PUT /api/devices/{mac}/syslog-ip` — set a secondary syslog lookup IP for multi-interface devices (e.g. OPNsense firewall with separate management and LAN IPs).
-- `PUT /api/devices/{mac}/type` — override auto-detected device type; pass null to clear.
-- `GET /api/devices/export` — download full inventory as CSV or JSON (`?format=csv|json`). CSV serialises `metadata` as a JSON string column.
-- `GET /api/logs` — global syslog full-text search across all entries (`?q=term&limit=N`).
-- `GET /api/health` — per-source health status: `ok` / `stale` / `unknown`, last-ok timestamp, last result count.
-
-#### Disappearance Tracking & Webhook Alerting
-- `update_disappearance_counts(seen_macs)`: increments `disappearance_count` for every device NOT seen in the current scan cycle.
-- `ALERT_WEBHOOK_URL`: when set, the scanner POSTs JSON payloads to this URL:
-  - `device_discovered` — new MAC seen for the first time.
-  - `device_gone` — device's `disappearance_count` reaches `ALERT_DISAPPEARANCE_THRESHOLD` (default: 3 consecutive missed scans).
-- Payload includes: `event`, `timestamp`, `device.mac`, `device.ip`, `device.alias`, `device.vendor`, `device.device_type`, `device.last_seen`.
-- Webhook delivery is fire-and-forget with a 5-second timeout; failures logged as warnings.
-
-#### Source Health Tracking
-- In-memory `_source_health` dict tracking `last_ok` timestamp and `last_count` per source.
-- Updated after every scan via `_record_source(name, count)`.
-- `/api/health` computes staleness against `SCAN_INTERVAL * 2` threshold.
-
-#### Syslog Purge
-- `purge_old_syslogs(days=30)`: deletes syslog entries older than 30 days, called once per scan cycle.
-
----
-
-### P4 — Dashboard & Device Management UI
-**Commit:** `d183ca0` (same as P3)
-
-Major frontend overhaul (`frontend/index.html`):
-
-#### Header / Stats Bar
-- Per-type device count chips: Total, Bare-metal, Docker, VM, LXC — all live-updated on each refresh.
-- Per-source health indicator dots: OPNsense ARP, DHCP, Proxmox, Docker, NDP, nmap, SNMP — coloured green/amber/red based on `/api/health`.
-- Animated pulsing live-dot + "Last updated" timestamp.
-- Manual Refresh button with spinning icon during fetch.
-
-#### Device Table
-- Columns: checkbox, type-icon, IP, MAC, Vendor, Type badge, Name/Alias, Last Seen, expand arrow.
-- Colour-coded type badges: bare-metal (gray), vm (amber), lxc (purple), docker-container (cyan), with icon per type.
-- Client-side search/filter input: filters across IP, MAC, vendor, alias in real-time.
-- Filter result count shown inline.
-- Disappearance count warning indicator on rows where count > 0.
-- Rows are clickable to open the slide-in detail panel.
-
-#### Bulk Action Bar
-- Checkbox select-all / individual row selection.
-- Bulk retype: applies a chosen device type to all selected MACs via sequential `PUT /api/devices/{mac}/type` calls.
-- Bulk export: downloads a JSON blob of only the selected devices.
-- Selected count label, Clear button.
-
-#### Slide-in Detail Panel
-- Slides in from the right with `transform: translateX` CSS transition; overlay backdrop.
-- Header: type badge, device name/alias, IPv4, IPv6 (hidden if absent), MAC, vendor, first-seen, disappearance warning.
-- **Docker metadata block**: container status, image tag, short container ID, network names, and Docker host (resolved to alias if set) — shown only for docker-container devices.
-- **Host-network containers block**: lists all `--network host` containers running on a device; shown on any device type when present (see P5).
-- **Proxmox metadata block**: node name, VMID, power status, proxmox type (VM/LXC) — shown only for vm/lxc devices.
-- **Alias editor**: inline text input + Save button; calls `PUT /api/devices/{mac}/alias`.
-- **Type override**: dropdown of all device types + Save/Clear buttons; calls `PUT /api/devices/{mac}/type`.
-- **Notes field**: multi-line textarea + Save button; calls `PUT /api/devices/{mac}/notes`.
-- **Syslog IP override**: text input for secondary IP + Save/Clear; calls `PUT /api/devices/{mac}/syslog-ip`.
-- **Syslog viewer**: fetches `/api/logs/{syslog_ip_or_primary_ip}`, colour-coded by severity (emergency=red, warning=amber, info=blue, debug=gray). Severity badge + timestamp + message per row.
-- Export buttons (CSV / JSON) in the filter bar.
-
----
-
-### P5 — Host-Network Container Fix & Docker Host Attribution
-
-#### Problem: Host-Network Containers Overwriting Docker Host Identity
-Containers running with `--network host` share the daemon host's MAC address and IP — they have no independent network identity. The previous merge logic upserted these containers directly onto the host device record, overwriting its `device_type` with `docker-container` and its `vendor` with `"Docker"`. If multiple host-network containers ran on the same host (e.g. rustdesk alongside logspout), each scan cycle the last container processed would win, clobbering all prior metadata.
-
-#### Fix: Accumulate Host-Network Containers Without Overwriting Host Identity (`src/main.py`, `src/database.py`)
-- During the Docker merge loop, host-network containers are no longer immediately upserted. Instead they are collected into `_host_net_containers: dict[str, list[dict]]`, keyed by the resolved host MAC.
-- After the main loop, `merge_host_containers(mac, containers)` is called once per host. This function reads the host device's existing `metadata` JSON, injects `host_network_containers` as a list, and writes it back — **without touching `device_type`, `vendor`, or any other column**.
-- Result: the Docker host retains its original `bare-metal` type and vendor identity. Its metadata blob now carries a `host_network_containers` array listing every `--network host` container running on it.
-
-#### New Database Function: `merge_host_containers` (`src/database.py`)
-- Reads current `metadata` for the device, merges in the `host_network_containers` key, and writes back via a targeted `UPDATE devices SET metadata = ? WHERE mac = ?`.
-- Safe to call repeatedly — each scan cycle replaces the full list with the current snapshot.
-
-#### Frontend: Host-Network Containers Panel (`frontend/index.html`)
-- New "Host-Network Containers" panel in the slide-in detail view, hidden by default.
-- Shown whenever `device.metadata.host_network_containers` is a non-empty array.
-- Renders one card per container: name, image, status (colour-coded), short container ID.
-- Appears on any device type — a bare-metal Docker host correctly shows its host-networked containers without being relabelled as a `docker-container`.
-
----
-
-#### Docker Host Attribution (`src/identifiers.py`, `src/main.py`, `frontend/index.html`)
-- Added `docker_host: str = ""` field to the `DockerInfo` dataclass.
-- In `_fetch_one`, populated for every container — both bridge-networked and host-networked:
-  - TCP hosts: IP extracted from the URL (`tcp://10.30.40.2:2375` → `"10.30.40.2"`).
-  - Local Unix socket: `"localhost"`.
-- `docker_host` is stored in every container's `metadata` JSON blob via `docker_meta`.
-- **Frontend**: The Docker Container Details panel now includes a **Host** row. At render time, `allDevices` is searched for a device whose `ip` matches `metadata.docker_host`. If found and aliased, displays `"DockerHost1 (10.30.40.2)"`; if no alias, displays the raw IP. Setting an alias on the Docker host device retroactively improves the label for all containers on that host without any re-scan.
-
----
-
-#### Logspout Syslog Forwarding (Deployment Note)
-To stream container stdout/stderr logs from Docker hosts into the syslog receiver, deploy one Logspout container per Docker host:
-
-```bash
-sudo docker run -d --name logspout --restart=always \
-  -e SYSLOG_HOSTNAME=$(hostname) \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  gliderlabs/logspout syslog+udp://MONITOR_IP:514
-```
-
-- Logspout mounts the Docker socket, tails all running container logs, and forwards them as UDP syslog datagrams — no daemon restart or container recreation required.
-- Messages arrive from the Docker host's IP, so logs are attributed to the host device row in the dashboard. The container name is embedded in the syslog message body.
-- The monitoring app's syslog receiver (`src/syslog_server.py`) already handles these without modification — UDP port 514, RFC 3164 format.
-
----
-
-## File Structure
-
-```
-src/
-  main.py           FastAPI app, lifespan, scan loop, all API endpoints
-  database.py       SQLite schema, migrations, async CRUD (devices + syslogs)
-  opnsense.py       OPNsense ARP, NDP, and DHCP REST API clients
-  identifiers.py    Docker (multi-host) and Proxmox (multi-node) discovery
-  nmap_scanner.py   Optional nmap subprocess ping sweep
-  snmp_scanner.py   Optional SNMP ARP-cache MIB walk
-  syslog_server.py  Async UDP syslog receiver (RFC 3164, RFC 5424, filterlog)
-  scanner.py        Legacy scapy ARP scanner (CLI use only)
-
-frontend/
-  index.html        Single-page dark-mode dashboard (vanilla JS + Tailwind CDN)
-
-scan.py             CLI entrypoint for manual ARP scans
-requirements.txt    Python dependencies
-```
-
----
-
-## API Reference
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/` | Serve the dashboard HTML |
-| `GET` | `/api/devices` | List all devices (filterable: `device_type`, `search`, `since`; paginated: `limit`, `offset`) |
-| `GET` | `/api/devices/export` | Download inventory as CSV or JSON (`?format=csv\|json`) |
-| `GET` | `/api/logs/{ip}` | Last 50 syslogs for a device IP |
-| `GET` | `/api/logs` | Global syslog search (`?q=term&limit=N`) |
-| `PUT` | `/api/devices/{mac}/alias` | Set human-readable alias |
-| `PUT` | `/api/devices/{mac}/type` | Override device type (null to clear) |
-| `PUT` | `/api/devices/{mac}/notes` | Set/clear operator notes |
-| `PUT` | `/api/devices/{mac}/syslog-ip` | Set/clear secondary syslog IP |
-| `GET` | `/api/health` | Per-source discovery health status |
+*Back to [README](./README.md). Maintainer: Skyler King · [moshthesubnet.com](https://moshthesubnet.com).*
