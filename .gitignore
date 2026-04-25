@@ -18,3 +18,4 @@ _*_tmp.py
 data/
 # Visual brainstorming artifacts
 .superpowers/
+.gstack/
