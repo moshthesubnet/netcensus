@@ -136,14 +136,37 @@ ALERT_DISAPPEARANCE_THRESHOLD = int(os.environ.get("ALERT_DISAPPEARANCE_THRESHOL
 # Source health tracking  (in-memory, reset on restart)
 # ---------------------------------------------------------------------------
 
+def _source_enabled() -> dict[str, bool]:
+    """Per-source 'enabled' flags derived from environment configuration.
+
+    A source is enabled when its required environment variables are set.
+    Disabled sources are excluded from the overall health rollup so an
+    unused integration can't drag the dashboard's status to 'unknown'.
+    Docker is always considered enabled because query_docker falls back
+    to the local /var/run/docker.sock when no TCP hosts are configured.
+    """
+    opnsense_configured = bool(
+        os.environ.get("OPNSENSE_URL")
+        and os.environ.get("OPNSENSE_KEY")
+        and os.environ.get("OPNSENSE_SECRET")
+    )
+    return {
+        "opnsense_arp":  opnsense_configured,
+        "opnsense_dhcp": opnsense_configured,
+        "opnsense_ndp":  opnsense_configured,
+        "proxmox":       bool(PROXMOX_NODES),
+        "docker":        True,
+        "nmap":          bool(NMAP_SUBNETS),
+        "snmp":          bool(SNMP_HOSTS),
+    }
+
+
 _source_health: dict[str, dict[str, Any]] = {
-    "opnsense_arp":  {"last_ok": None, "last_count": 0},
-    "opnsense_dhcp": {"last_ok": None, "last_count": 0},
-    "opnsense_ndp":  {"last_ok": None, "last_count": 0},
-    "proxmox":       {"last_ok": None, "last_count": 0},
-    "docker":        {"last_ok": None, "last_count": 0},
-    "nmap":          {"last_ok": None, "last_count": 0},
-    "snmp":          {"last_ok": None, "last_count": 0},
+    name: {"last_ok": None, "last_count": 0}
+    for name in (
+        "opnsense_arp", "opnsense_dhcp", "opnsense_ndp",
+        "proxmox", "docker", "nmap", "snmp",
+    )
 }
 
 
@@ -704,23 +727,36 @@ async def health() -> JSONResponse:
     """
     now = datetime.now(timezone.utc)
     stale_threshold = SCAN_INTERVAL * 2
+    enabled = _source_enabled()
 
     sources: dict[str, Any] = {}
     for name, info in _source_health.items():
         last_ok: str | None = info["last_ok"]
-        if last_ok is None:
+        if not enabled.get(name, True):
+            status = "disabled"
+        elif last_ok is None:
             status = "unknown"
         else:
             age = (now - datetime.fromisoformat(last_ok)).total_seconds()
             status = "ok" if age <= stale_threshold else "stale"
         sources[name] = {
             "status": status,
+            "enabled": enabled.get(name, True),
             "last_ok": last_ok,
             "last_count": info["last_count"],
         }
 
-    any_unknown = any(s["status"] == "unknown" for s in sources.values())
-    any_stale   = any(s["status"] == "stale"   for s in sources.values())
-    overall = "unknown" if any_unknown else ("degraded" if any_stale else "ok")
+    # Roll up overall status from enabled sources only — disabled integrations
+    # must not drag the dashboard to 'unknown' just because they were never
+    # configured.
+    enabled_statuses = [s["status"] for s in sources.values() if s["enabled"]]
+    if not enabled_statuses:
+        overall = "unknown"
+    elif any(st == "unknown" for st in enabled_statuses):
+        overall = "unknown"
+    elif any(st == "stale" for st in enabled_statuses):
+        overall = "degraded"
+    else:
+        overall = "ok"
 
     return JSONResponse({"status": overall, "sources": sources})
