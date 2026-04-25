@@ -242,22 +242,26 @@ async def _run_scan_once() -> int:
     _record_source("nmap",          len(nmap_map))
     _record_source("snmp",          len(snmp_map))
 
-    # Fold nmap/SNMP extra entries into arp_map (ARP table takes priority on conflict)
+    # arp_map values are dicts ({"ip", "intf", "intf_description"}). nmap/SNMP
+    # extras are flat {mac: ip} — wrap them so the merge loop has a uniform shape.
     for mac, ip in {**snmp_map, **nmap_map}.items():
         if mac not in arp_map:
-            arp_map[mac] = ip
+            arp_map[mac] = {"ip": ip, "intf": "", "intf_description": ""}
 
     seen_macs: set[str] = set()
 
     # ── 1. Merge OPNsense ARP table with Proxmox inventory ───────────────────
     opnsense_upserted = 0
-    for mac, arp_ip in arp_map.items():
+    for mac, arp_entry in arp_map.items():
+        arp_ip            = arp_entry["ip"]
+        intf              = arp_entry.get("intf", "")
+        intf_description  = arp_entry.get("intf_description", "")
         proxmox_info = proxmox_map.get(mac)
         ipv6 = ndp_map.get(mac)
         if proxmox_info:
             device_type   = proxmox_info.type
             vendor        = "Proxmox"
-            proxmox_meta  = {
+            base_meta: dict[str, Any] = {
                 "vm_id":        proxmox_info.vm_id,
                 "node":         proxmox_info.node,
                 "status":       proxmox_info.status,
@@ -266,11 +270,26 @@ async def _run_scan_once() -> int:
         else:
             device_type  = "bare-metal"
             vendor       = "Unknown"
-            proxmox_meta = None
+            base_meta = {}
+
+        # Tag with network segment so the dashboard's VLAN counter has
+        # something to count. intf_description is the operator-assigned
+        # human label (e.g. "Servers", "Lab"); intf is OPNsense's machine
+        # name (e.g. "vlan01"). We expose both so the UI can prefer the
+        # description and fall back to the interface name.
+        if intf or intf_description:
+            base_meta["intf"]             = intf
+            base_meta["intf_description"] = intf_description
+            # The frontend reads metadata.vlan to count network segments.
+            # Use the human description when present (most useful), else
+            # the machine interface name. Empty string means "not on a
+            # tagged sub-interface" (e.g. WAN), which is filtered out by
+            # the frontend's truthy-only counting.
+            base_meta["vlan"]             = intf_description or intf
 
         await upsert_device(
             mac=mac, ip=arp_ip, vendor=vendor,
-            device_type=device_type, metadata=proxmox_meta, ipv6=ipv6,
+            device_type=device_type, metadata=base_meta or None, ipv6=ipv6,
         )
 
         if proxmox_info:
@@ -313,7 +332,7 @@ async def _run_scan_once() -> int:
             ndp_only += 1
 
     # ── 3. Upsert Docker containers (cross-VLAN, independent of ARP) ──────────
-    _ip_to_mac = {ip: mac for mac, ip in arp_map.items()}
+    _ip_to_mac = {entry["ip"]: mac for mac, entry in arp_map.items()}
 
     # Accumulate host-network containers per host MAC; merged after the main loop
     # so the host device retains its own device_type/vendor.

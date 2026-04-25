@@ -32,13 +32,21 @@ logger = logging.getLogger(__name__)
 _ARP_ENDPOINT = "/api/diagnostics/interface/getArp"
 
 
+class ArpEntry(dict):
+    """Typed-ish ARP entry: ``{"ip": str, "intf": str, "intf_description": str}``.
+
+    Subclassing dict keeps backward compatibility — callers that only need the
+    IP can use ``entry["ip"]`` instead of treating the whole value as a string.
+    """
+
+
 async def query_opnsense(
     url: str | None = None,
     key: str | None = None,
     secret: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, ArpEntry]:
     """
-    Fetch the global ARP table from OPNsense and return a MAC → IP mapping.
+    Fetch the global ARP table from OPNsense.
 
     Args:
         url:    OPNsense base URL (default: OPNSENSE_URL env var).
@@ -46,7 +54,11 @@ async def query_opnsense(
         secret: API secret / Basic Auth password (default: OPNSENSE_SECRET env var).
 
     Returns:
-        Dict mapping lowercase MAC address to IP string.
+        Dict mapping lowercase MAC address → ``{"ip", "intf", "intf_description"}``.
+        ``intf`` is the OPNsense interface name (e.g. ``vlan01``, ``igc0``);
+        ``intf_description`` is the operator-assigned label (e.g. ``Servers``,
+        ``WAN``) — the human-friendly network segment identifier used by the
+        dashboard's VLANs/networks counter.
         Empty dict on any connection or auth failure.
     """
     base_url = (url or os.environ.get("OPNSENSE_URL", "")).rstrip("/")
@@ -84,7 +96,7 @@ async def query_opnsense(
     # The API returns either a list of entry dicts, or {"arp": [...]}
     entries = data if isinstance(data, list) else data.get("arp", [])
 
-    result: dict[str, str] = {}
+    result: dict[str, ArpEntry] = {}
     for entry in entries:
         mac = str(entry.get("mac", "")).strip().lower()
         ip  = str(entry.get("ip",  "")).strip()
@@ -93,7 +105,11 @@ async def query_opnsense(
         if not mac or not ip or len(mac) != 17 or mac in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"):
             continue
 
-        result[mac] = ip
+        result[mac] = ArpEntry(
+            ip=ip,
+            intf=str(entry.get("intf", "")).strip(),
+            intf_description=str(entry.get("intf_description", "")).strip(),
+        )
 
     logger.info("OPNsense ARP table: %d valid entries from %s", len(result), base_url)
     return result
