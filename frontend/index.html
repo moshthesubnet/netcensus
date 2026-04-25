@@ -657,6 +657,7 @@ function renderTable(devices) {
   const loading = document.getElementById('table-loading');
   const table   = document.getElementById('device-table');
   const empty   = document.getElementById('table-empty');
+  const error   = document.getElementById('table-error');
   const tbody   = document.getElementById('device-tbody');
   const search  = document.getElementById('search').value.toLowerCase().trim();
 
@@ -670,6 +671,7 @@ function renderTable(devices) {
     : devices;
 
   loading.classList.add('hidden');
+  if (error) { error.classList.add('hidden'); error.classList.remove('flex'); }
 
   if (filtered.length === 0) {
     table.classList.add('hidden');
