@@ -610,12 +610,16 @@ async function fetchDevices() {
 }
 
 function showFetchError() {
-  const loading = document.getElementById('table-loading');
-  const empty   = document.getElementById('table-error');
-  if (!loading || !empty) return;
+  const loading   = document.getElementById('table-loading');
+  const errorDiv  = document.getElementById('table-error');
+  const table     = document.getElementById('device-table');
+  const emptyDiv  = document.getElementById('table-empty');
+  if (!loading || !errorDiv) return;
   loading.classList.add('hidden');
-  empty.classList.remove('hidden');
-  empty.classList.add('flex');
+  if (table)    { table.classList.add('hidden'); }
+  if (emptyDiv) { emptyDiv.classList.add('hidden'); emptyDiv.classList.remove('flex'); }
+  errorDiv.classList.remove('hidden');
+  errorDiv.classList.add('flex');
 }
 
 function updateStats(devices) {
