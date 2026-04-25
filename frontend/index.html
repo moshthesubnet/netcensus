@@ -747,7 +747,7 @@ function deviceRow(d) {
       <span class="dot ${status.cls}" title="${esc(status.label)}"></span>
     </td>
     <td class="px-4 py-3 mono text-sm ${ipCls}">${esc(d.ip ?? '—')}</td>
-    <td class="px-4 py-3 mono text-xs text-ink-muted">${esc(d.mac)}</td>
+    <td class="px-4 py-3 mono text-xs text-ink-muted max-w-[160px] truncate" title="${esc(d.mac)}">${esc(d.mac)}</td>
     <td class="px-4 py-3 text-ink-body text-xs max-w-[180px] truncate" title="${esc(d.vendor)}">${esc(d.vendor)}</td>
     <td class="px-4 py-3"><span class="badge ${badge.cls}">${badge.label}</span></td>
     <td class="px-4 py-3 text-ink-body text-xs">${nameCel}</td>
@@ -931,11 +931,6 @@ async function fetchLogs(ip) {
   try {
     const res = await fetch(`/api/logs/${encodeURIComponent(ip)}`);
 
-    if (res.status === 404) {
-      loading.classList.add('hidden');
-      empty.classList.remove('hidden');
-      return;
-    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const logs = await res.json();
