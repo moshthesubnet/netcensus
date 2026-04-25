@@ -32,9 +32,15 @@ Query all three concurrently each cycle, merge into one SQLite-backed device reg
 
 ## Dashboard
 
-![netcensus dashboard](docs/images/dashboard.png)
+![netcensus dashboard — full device table](docs/images/dashboard.png)
 
-*Demo seed: 6 VLANs, 46 devices, one intentional `device_gone` alert on VLAN 99.*
+*Demo seed: 5 VLANs, 46 devices, one intentional `device_gone` alert on VLAN 99.*
+
+![Stats bar — devices, VLANs, composition, alerts](docs/images/stats-bar.png)
+
+![Device detail panel — alias, type, notes, syslog history](docs/images/detail-panel.png)
+
+![Mobile view](docs/images/mobile.png)
 
 ## Feature highlights
 
