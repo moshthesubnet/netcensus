@@ -645,7 +645,7 @@ function updateStats(devices) {
   bar('ov-bar-vm', vm); bar('ov-bar-lxc', lxc);
 
   // Derived: VLAN count and alerts (compute from the same payload)
-  const vlans = new Set((devices || []).map(d => d.vlan).filter(Boolean));
+  const vlans = new Set((devices || []).map(d => d.metadata?.vlan).filter(Boolean));
   setText('ov-vlans', vlans.size || '–');
   setText('ov-vlans-note', vlans.size ? 'all reachable' : '');
   const alerts = (devices || []).filter(d => d.disappearance_count >= 3).length;
