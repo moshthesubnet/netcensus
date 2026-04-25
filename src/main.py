@@ -50,13 +50,13 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()  # loads .env from the working directory before any os.environ.get() calls
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from src.database import (
     get_all_devices, get_logs_for_ip, init_db, merge_host_containers,
@@ -475,8 +475,24 @@ class AliasRequest(BaseModel):
     alias: str
 
 
+DeviceTypeLiteral = Literal[
+    "bare-metal",
+    "vm",
+    "lxc",
+    "docker-container",
+    "firewall",
+    "hypervisor",
+    "switch",
+    "ap",
+    "pc",
+    "smartphone",
+    "printer",
+    "iot",
+]
+
+
 class TypeRequest(BaseModel):
-    type: str | None = None
+    type: DeviceTypeLiteral | None = None
 
 
 class NotesRequest(BaseModel):
@@ -485,6 +501,18 @@ class NotesRequest(BaseModel):
 
 class SyslogIpRequest(BaseModel):
     syslog_ip: str | None = None
+
+    @field_validator("syslog_ip")
+    @classmethod
+    def _validate_ip(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        import ipaddress
+        try:
+            ipaddress.ip_address(v)
+        except ValueError as exc:
+            raise ValueError(f"{v!r} is not a valid IPv4 or IPv6 address") from exc
+        return v
 
 
 class DeviceResponse(BaseModel):
