@@ -19,3 +19,4 @@ data/
 # Visual brainstorming artifacts
 .superpowers/
 .gstack/
+tools/tailwindcss
