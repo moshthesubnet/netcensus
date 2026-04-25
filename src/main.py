@@ -575,15 +575,11 @@ async def list_devices(
 async def get_device_logs(ip_address: str) -> list[dict[str, Any]]:
     """
     Returns the last 50 syslog messages received from **ip_address**,
-    ordered newest first.
+    ordered newest first. Returns an empty list when no logs exist for the IP
+    (the frontend handles the empty state and a 404 here would pollute the
+    browser console for every device click).
     """
-    logs = await get_logs_for_ip(ip_address, limit=50)
-    if not logs:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No syslog entries found for {ip_address}",
-        )
-    return logs
+    return await get_logs_for_ip(ip_address, limit=50)
 
 
 @app.put(

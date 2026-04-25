@@ -129,3 +129,20 @@ def test_put_syslog_ip_accepts_null_to_clear():
         r = client.put("/api/devices/aa:bb:cc:dd:ee:01/syslog-ip",
                        json={"syslog_ip": None})
         assert r.status_code == 200, r.text
+
+
+# ── ISSUE-003: GET /api/logs/{ip} returns [] (200) instead of 404 when empty ─
+
+
+def test_get_device_logs_returns_empty_list_when_no_logs():
+    """Bug: this endpoint used to raise 404 for devices with no syslog history,
+    polluting the browser console on every device click.
+
+    Regression for ISSUE-003 (medium severity, console hygiene + API design).
+    """
+    with _app_with_temp_db() as client:
+        r = client.get("/api/logs/10.255.255.255")
+        assert r.status_code == 200, (
+            f"Expected 200 for empty logs, got {r.status_code}: {r.text}"
+        )
+        assert r.json() == []
